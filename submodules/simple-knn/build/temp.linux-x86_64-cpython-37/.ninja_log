@@ -1,0 +1,4 @@
+# ninja log v5
+0	5314	1718292516638878827	/home/dullpigeon/Desktop/SUMMER/Relightable3DGaussian/submodules/simple-knn/build/temp.linux-x86_64-cpython-37/simple_knn.o	dd6ec3b77799310a
+0	7648	1718292518966912217	/home/dullpigeon/Desktop/SUMMER/Relightable3DGaussian/submodules/simple-knn/build/temp.linux-x86_64-cpython-37/ext.o	285cc7f4514fcb6d
+0	22243	1718292533567121623	/home/dullpigeon/Desktop/SUMMER/Relightable3DGaussian/submodules/simple-knn/build/temp.linux-x86_64-cpython-37/spatial.o	cb85636105fb9dc4
