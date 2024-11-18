@@ -36,7 +36,7 @@ We organize the datasets like this:
 where ``combustion`` is the volume dataset name, ``TF01`` is the first sampled transfer function (TF), ``test`` and ``train`` are two dictionary that contatining the testing and training images, ``.json`` files stores the camera poses.
 
 
-We release a combustion dataset with 10 basic TFs and the model ckpts [here](https://github.com/graphdeco-inria/reduced-3dgs), you can download the dataset and ckpts put them into ``Data`` and ``output`` folder, respectively.
+We release a combustion dataset with 10 basic TFs and the model ckpts [here](https://drive.google.com/drive/folders/11C2XJnA3bXMariDWmjT-oplFl1e2sqql?usp=sharing), you can download the dataset and ckpts put them into ``Data`` and ``output`` folder, respectively.
 
 ## Training and Evaluation
 The following code will train iVR-GS on the combustion dataset with 10 basic TFs:
