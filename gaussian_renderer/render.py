@@ -10,7 +10,7 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.loss_utils import ssim
 from utils.image_utils import psnr
-from .r3dg_rasterization import GaussianRasterizationSettings, GaussianRasterizer 
+from .diff_rasterization import GaussianRasterizationSettings, GaussianRasterizer 
 
 
 def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, 

@@ -18,7 +18,6 @@ from utils.system_utils import searchForMaxIteration
 from torchvision.utils import save_image
 from tqdm import tqdm
 
-from gaussian_renderer.neilf_composite import sample_incident_rays
 from scene.palette_color import LearningPaletteColor
 from scene.opacity_trans import LearningOpacityTransform
 from scene.light_trans import LearningLightTransform
@@ -230,10 +229,17 @@ if __name__ == '__main__':
         psnr_test = 0
         
         for idx, evalImgPath in enumerate(evalImgPaths):
-            evalImg = cv2.imread(evalImgPath)
-            GTImg = cv2.imread(GTImgPaths[idx])
-            # print(f"evalImgPath: {evalImgPath}", "GTImgPath: ", GTImgPaths[idx])
+            evalImg = cv2.imread(evalImgPath) 
+            GTImg = cv2.imread(GTImgPaths[idx], cv2.IMREAD_UNCHANGED) 
+
+            if GTImg.shape[2] == 4:
+                alpha = GTImg[:, :, 3] / 255.0  
+                white_bg = np.ones_like(GTImg[:, :, :3]) * 255  
+                GTImg = (GTImg[:, :, :3] * alpha[:, :, None] + white_bg * (1 - alpha[:, :, None])).astype(np.uint8)
+            else:
+                GTImg = GTImg[:, :, :3]
             psnr_test += cv2.PSNR(GTImg, evalImg)
+
             # print(f"PSNR for {idx}: {cv2.PSNR(GTImg, evalImg)}")
         psnr_test /= len(evalImgPaths)
         print(f"PSNR: {psnr_test}")

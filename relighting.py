@@ -18,7 +18,6 @@ from utils.system_utils import searchForMaxIteration
 from torchvision.utils import save_image
 from tqdm import tqdm
 
-from gaussian_renderer.neilf_composite import sample_incident_rays
 from scene.palette_color import LearningPaletteColor
 from scene.opacity_trans import LearningOpacityTransform
 from scene.light_trans import LearningLightTransform

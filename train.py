@@ -52,9 +52,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     # exit()
     gaussians.training_setup(opt)
 
-    """
-    Setup PBR components, KT: Global parameters
-    """
+
     pbr_kwargs = dict()
     
     #* initialize optimizable palette color

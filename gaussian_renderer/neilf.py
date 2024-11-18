@@ -10,7 +10,7 @@ from utils.sh_utils import eval_sh, eval_sh_coef
 from utils.loss_utils import ssim, bilateral_smooth_loss, contentrate_loss, sparsity_loss
 from utils.image_utils import psnr
 from utils.graphics_utils import fibonacci_sphere_sampling
-from .r3dg_rasterization import GaussianRasterizationSettings, GaussianRasterizer, RenderEquation, \
+from .diff_rasterization import GaussianRasterizationSettings, GaussianRasterizer, RenderEquation, \
     RenderEquation_complex
 
 

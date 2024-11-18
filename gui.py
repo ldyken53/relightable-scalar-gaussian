@@ -580,7 +580,7 @@ class GUI:
 
             if self.debug:
                 dpg.set_value("_log_pose", str(self.cam.pose))
-        #* KT: modifed this to use ArcBall Rotation
+        
         with dpg.handler_registry():
             dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Left, callback=callback_camera_start_rotate)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Left, callback=callback_camera_drag_rotate)

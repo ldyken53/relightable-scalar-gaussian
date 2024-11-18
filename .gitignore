@@ -1,2 +1,7 @@
 __pycache__/
 output/
+build/
+diff_gaussian_rasterization.egg-info/
+simple_knn.egg-info/
+output/*/
+Data/*/

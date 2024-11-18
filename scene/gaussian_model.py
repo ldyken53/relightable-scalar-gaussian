@@ -14,7 +14,7 @@ from simple_knn._C import distCUDA2
 from arguments import OptimizationParams
 from tqdm import tqdm
 from einops import rearrange, reduce, repeat
-from r3dg_rasterization._C import kmeans_cuda
+from diff_gaussian_rasterization._C import kmeans_cuda
 from collections import OrderedDict
 class Codebook():
     def __init__(self, ids, centers):
