@@ -1,7 +1,7 @@
 # iVR-GS: Inverse Volume Rendering for Explorable Visualization via Editable 3D Gaussian Splatting
 ![alt text](assets/figs/teaser.png)
 ## Description
-This is the implementation for iVR-GS: Inverse Volume Rendering for Explorable Visualization via Editable 3D Gaussian Splatting
+This is the implementation for iVR-GS: Inverse Volume Rendering for Explorable Visualization via Editable 3D Gaussian Splatting.
 
 ## Setup
 
