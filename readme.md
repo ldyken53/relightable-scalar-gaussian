@@ -35,8 +35,7 @@ We organize the datasets like this:
 ```
 where ``combustion`` is the volume dataset name, ``TF01`` is the first sampled transfer function (TF), ``test`` and ``train`` are two dictionary that contatining the testing and training images, ``.json`` files stores the camera poses.
 
-
-We release a combustion dataset with 10 basic TFs and the model ckpts [here](https://drive.google.com/drive/folders/1FRDCuCfgW45XQ8vg19gsI38WZOjzb26U?usp=sharing), you can download the dataset and ckpts put them into ``Data`` and ``output`` folder, respectively.
+We release a combustion dataset with 10 basic TFs and the model ckpts [here](https://drive.google.com/drive/folders/1FRDCuCfgW45XQ8vg19gsI38WZOjzb26U?usp=sharing), you can download the dataset and ckpts put them into ``Data`` and ``output`` folder, respectively. (Note: compared with the original implementation we used in the paper, we updated a little bit to obtain higher quality reconstruction on the specular part. To reproduce the results with the model ckpts we provide here, please use the implementation of this commit ``82d2190``. We will replace the model ckpts using the latest implementation as soon as possible)
 
 ## Training and Evaluation
 The following code will train iVR-GS on the combustion dataset with 10 basic TFs:
