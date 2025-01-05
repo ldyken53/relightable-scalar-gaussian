@@ -218,8 +218,8 @@ class GaussianModel:
 
     @property
     def get_shininess(self):
-        # return self.shininess_activation(self._shininess)
-        return self._shininess
+        return self.shininess_activation(self._shininess)*50 # for high specular part
+        # return self._shininess
     
     @property
     def get_ambient_factor(self):
@@ -228,8 +228,8 @@ class GaussianModel:
     
     @property
     def get_specular_factor(self):
-        # return self.specular_factor_activation(self._specular_factor)
-        return self._specular_factor
+        return self.specular_factor_activation(self._specular_factor)*5 # for high specular part
+        # return self._specular_factor # original
     
     @property
     def get_xyz(self):
