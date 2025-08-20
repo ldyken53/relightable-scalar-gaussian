@@ -187,8 +187,6 @@ def storePly(path, xyz, rgb, normals=None):
     ply_data.write(path)
 
 
-
-
 def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png", debug=False):
     cam_infos = []
 
@@ -275,6 +273,109 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", debug=
 
         # We create random points inside the bounds of the synthetic Blender scenes
         xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+        shs = np.random.random((num_pts, 3)) / 255.0
+        normals = np.random.randn(*xyz.shape)
+        normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+
+        storePly(ply_path, xyz, SH2RGB(shs) * 255, normals)
+
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+
+    return scene_info
+
+
+def readCamerasFromJSON(path, camerasfile, white_background, extension=".png", debug=False):
+    cam_infos = []
+
+    read_mvs = False
+    mvs_dir = f"{path}/extra"
+    if os.path.exists(mvs_dir) and "train" not in camerasfile:
+        print("Loading mvs as geometry constraint.")
+        read_mvs = True
+
+    with open(os.path.join(path, camerasfile)) as json_file:
+        contents = json.load(json_file)
+        frames = contents
+        for idx, frame in enumerate(tqdm(frames, leave=False)):
+            image_path = os.path.join(path, frame["image_path"])
+            image_name = Path(image_path).stem
+
+            # get the world-to-camera transform and set R, T
+            R_w2c = np.array(frame["R"])      # as written in JSON
+            C      = np.array(frame["T"])     # camera centre
+
+            R = R_w2c.T                       # convert to C2W
+            T = -R_w2c @ C                    # *use the ORIGINAL W2C* to build t
+
+            fovx = frame["FovX"]
+            fovy = frame["FovY"]
+                
+            image, is_hdr = load_img(image_path)
+
+            bg = np.array([1, 1, 1]) if white_background else np.array([0, 0, 0])
+
+            image_mask = np.ones_like(image[..., 0])
+            if image.shape[-1] == 4:
+                image_mask = image[:, :, 3]
+                image = image[:, :, :3] * image[:, :, 3:4] + bg * (1 - image[:, :, 3:4])
+
+            # read depth and mask
+            depth = None
+            normal = None
+            if read_mvs:
+                depth_path = os.path.join(mvs_dir + "/depths/", os.path.basename(frame["file_path"]) + ".tiff")
+                normal_path = os.path.join(mvs_dir + "/normals/", os.path.basename(frame["file_path"]) + ".pfm")
+
+                depth = load_depth(depth_path)
+                normal = load_pfm(normal_path)
+
+                depth = depth * image_mask
+                normal = normal * image_mask[..., np.newaxis]
+
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=fovy, FovX=fovx, image=image, image_mask=image_mask,
+                                        image_path=image_path, depth=depth, normal=normal, image_name=image_name,
+                                        width=image.shape[1], height=image.shape[0], hdr=is_hdr))
+            if debug and idx >= 5:
+                break
+
+    return cam_infos
+
+
+def readRawInfo(path, white_background, eval, extension=".png", debug=False):
+    print("Reading Training Cameras")
+    train_cam_infos = readCamerasFromJSON(path, "cameras_train.json", white_background, extension, debug=debug)
+    if eval:
+        print("Reading Test Cameras")
+        test_cam_infos = readCamerasFromJSON(path, "cameras_test.json", white_background, extension,
+                                                   debug=debug)
+    else:
+        test_cam_infos = []
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = os.path.join(path, "points3d.ply")
+    if not os.path.exists(ply_path):
+        # Since this data set has no colmap data, we start with random points
+        num_pts = 100_000
+        print(f"Generating random point cloud ({num_pts})...")
+
+        # We create random points inside the bounds of the Pyvista volume scenes
+        bbox_min = np.array([0.0, 0.0, 3.0])
+        bbox_max = np.array([1.0, 1.0, 4.0])
+        pad = 0.05 * (bbox_max - bbox_min).max()
+        bbox_min -= pad
+        bbox_max += pad
+
+        xyz = np.random.rand(num_pts, 3) * (bbox_max - bbox_min) + bbox_min
         shs = np.random.random((num_pts, 3)) / 255.0
         normals = np.random.randn(*xyz.shape)
         normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
@@ -439,4 +540,5 @@ def readNeILFInfo(path, white_background, eval, debug=False):
 sceneLoadTypeCallbacks = {
     "Blender": readNerfSyntheticInfo,
     "NeILF": readNeILFInfo,
+    "Raw": readRawInfo,
 }
