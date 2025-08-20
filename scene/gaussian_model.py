@@ -321,7 +321,7 @@ class GaussianModel:
         return gaussians
 
     def create_from_ckpt(self, checkpoint_path, restore_optimizer=False):
-        (model_args, first_iter) = torch.load(checkpoint_path)
+        (model_args, first_iter) = torch.load(checkpoint_path, weights_only=False)
 
         (self.active_sh_degree,
          self._xyz,
@@ -512,7 +512,7 @@ class GaussianModel:
             if half_float:
                 # No float 16 for plydata, so we just pointer cast everything to int16
                 for i in range(len(centers_numpy_list)):
-                    centers_numpy_list[i] = np.cast[np.float16](centers_numpy_list[i]).view(dtype=np.int16)
+                    centers_numpy_list[i] = np.asarray(centers_numpy_list[i], dtype=np.float16).view(dtype=np.int16)
                 
             codebooks[:] = list(map(tuple, np.concatenate([ar for ar in centers_numpy_list], axis=1)))
                 

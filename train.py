@@ -18,7 +18,6 @@ from utils.image_utils import psnr, visualize_depth
 from utils.system_utils import prepare_output_and_logger
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from gui import GUI
 from scene.gamma_trans import LearningGammaTransform
 from scene.opacity_trans import LearningOpacityTransform
 from scene.palette_color import LearningPaletteColor
