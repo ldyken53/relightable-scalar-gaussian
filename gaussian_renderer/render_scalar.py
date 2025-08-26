@@ -45,11 +45,51 @@ class LUTColour(torch.autograd.Function):
         return grad_s, None
 
 
-def gray2rgb(s, lut):
+def scalar2rgb(s, lut):
     """
     Wrapper that exposes an nn.Module-like interface.
     """
     return LUTColour.apply(s, lut)
+
+
+class LUTOpacity(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, s, lut):                    # s shape (N,1), lut (100,1)
+        """
+        s assumed in [0,1]; lut fixed length 100.
+        Returns opacity (N,1) by linear interpolation between neighbours.
+        """
+        # scale to [0,99]
+        idx = (s.clamp(0, 1) * 99.0).squeeze(-1)          # (N,)
+        idx_floor = torch.floor(idx).long()                # (N,)
+        idx_ceil  = torch.clamp(idx_floor + 1, max=99)    # (N,)
+        t = (idx - idx_floor.float()).unsqueeze(-1)        # (N,1)
+
+        c0 = lut[idx_floor]    # (N,1)  -> constant wrt s inside segment
+        c1 = lut[idx_ceil]     # (N,1)
+        opacity = (1.0 - t) * c0 + t * c1
+
+        # save what we need for backward
+        ctx.save_for_backward(c0, c1)
+        return opacity                                                # (N,1)
+
+    @staticmethod
+    def backward(ctx, grad_opac):
+        c0, c1 = ctx.saved_tensors        # neither depends on s
+        slope = (c1 - c0) / 99.0         # (N,1)  dO/ds inside segment
+
+        # chain rule:  dL/ds = <dL/dO , dO/ds>
+        grad_s = grad_opac * slope    # (N,1)
+
+        # lut is constant → no grad (return None)
+        return grad_s, None
+
+
+def scalar2opac(s, lut):
+    """
+    Wrapper that exposes an nn.Module-like interface.
+    """
+    return LUTOpacity.apply(s, lut)
 
 
 def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor, 
@@ -91,6 +131,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     means3D = pc.get_xyz
     means2D = screenspace_points #* this is zero tensor now, will be updated by rasterizer
     opacity = pc.get_opacity
+    # opacity = scalar2opac(pc.get_scalar, camera.opac_map)
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -120,7 +161,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     else:
         colors_precomp = override_color
 
-    scalar_color = gray2rgb(pc.get_scalar, camera.colormap)
+    scalar_color = scalar2rgb(pc.get_scalar, camera.colormap)
     normal = pc.get_normal
     features = torch.cat([scalar_color, normal], dim=-1)
 

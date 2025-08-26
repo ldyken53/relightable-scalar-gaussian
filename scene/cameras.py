@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, fx, fy, cx, cy, image, image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device="cuda", hdr=False,
-                 height=None, width=None, depth=None, normal=None, image_mask=None, colormap=None):
+                 height=None, width=None, depth=None, normal=None, image_mask=None, colormap=None,
+                 opac_map=None):
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -62,6 +63,27 @@ class Camera(nn.Module):
             control_points = np.linspace(0.0, 1.0, 100)
             colors = cmap(control_points)[:, :3]
             self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
+
+        if opac_map is not None:
+            self.opac_map = colormap
+        else:
+            # indices = np.arange(100)
+            # bins = np.linspace(0, 100, 3+1).astype(int)
+            # opacs = [((indices >= start - 1) & (indices < end + 1)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]
+            # opacs = [opac * 0.5 for opac in opacs]
+            # self.opac_map = torch.tensor(opacs[1].reshape(-1, 1), dtype=torch.float32).to("cuda")
+            opacs = []
+            indices = np.linspace(0, 1, 100)
+            step_size = 1.0 / 3
+            for step in range(3):
+                center = step * step_size + step_size / 2
+                arr = np.zeros(100, dtype=np.float32)
+                
+                for i, x in enumerate(indices):
+                    dist = abs(x - center)
+                    arr[i] = max(0, 1 - (dist * 2 * 1 * (3 / 2)))
+                opacs.append(arr)
+            self.opac_map = torch.tensor(opacs[1].reshape(-1, 1), dtype=torch.float32).to("cuda")
 
         self.zfar = 100.0
         self.znear = 0.01
