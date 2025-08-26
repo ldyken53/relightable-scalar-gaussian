@@ -72,21 +72,36 @@ def is_image_too_dark_numba(image, threshold=3):
 def buildRawDataset(
     out_path,
     raw_file,
-    num_maps
+    num_maps,
+    triangular
 ):
+    print(triangular)
     start_time = time.time()
-
-    num_steps = 256
-    indices = np.arange(num_steps)
-    bins = np.linspace(0, num_steps, num_maps+1).astype(int)
-    opacs = [((indices >= start - 1) & (indices < end + 1)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]
-    opacs = [opac * 0.5 for opac in opacs]
+    num_points = 100
+    slope = 1
+    opacs = []
+    if not triangular:
+        indices = np.arange(num_points)
+        bins = np.linspace(0, num_points, num_maps+1).astype(int)
+        for arr in [((indices >= start - 1) & (indices < end + 1)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]:
+            arr = arr * 0.5
+            opacs.append(arr)
+    else: 
+        indices = np.linspace(0, 1, num_points)
+        step_size = 1.0 / num_maps
+        for step in range(num_maps):
+            center = step * step_size + step_size / 2
+            arr = np.zeros(num_points, dtype=np.float32)
+            
+            for i, x in enumerate(indices):
+                dist = abs(x - center)
+                arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
+            opacs.append(arr)
     cmap = "rainbow"
 
     # Window setup
     width = 800
     height = 800
-    ratio = width / height
     pl = pv.Plotter(off_screen=True)
     pl.window_size = [width, height]
 
@@ -156,7 +171,7 @@ def buildRawDataset(
     for i, opac in enumerate(opacs):
         train_cams = []
         test_cams = []
-        opac_dir = os.path.join(dir, f"TF{(i+1):02d}")
+        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}TF{(i+1):02d}")
         os.makedirs(opac_dir)
         train_dir = os.path.join(opac_dir, f"train")
         os.makedirs(train_dir)
@@ -228,23 +243,6 @@ def buildRawDataset(
                 FovY = np.radians(camera.view_angle)
                 FovX = focal2fov(fov2focal(FovY, height), width)
 
-                # # Projection matrix conversion and adjustment
-                proj_matrix = arrayFromVTKMatrix(
-                    camera.GetCompositeProjectionTransformMatrix(
-                        ratio, 0.001, 1000.0
-                    )
-                )
-                # Y and Z flip
-                proj_matrix[1:3, :] *= -1
-
-                # Fix up modelview matrix if camera is flipped
-                if camera.position[1] < 0:
-                    mvt_matrix[2, 1] *= -1
-                mvt_matrix[2, 3] = abs(mvt_matrix[2, 3])
-
-                # Get camera center in world space
-                center = mvt_matrix[:3, 3]
-
                 cam_info = CameraInfo(
                     uid=im_count // 2,
                     R=R,
@@ -297,5 +295,9 @@ if __name__ == "__main__":
         type=int,
         help="Number of opacity maps / transfer-function bins to generate."
     )
+    parser.add_argument(
+        "--rectangular",
+        action="store_true"
+    )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.raw_file, args.num_maps)
+    buildRawDataset(args.path, args.raw_file, args.num_maps, (not args.rectangular))
