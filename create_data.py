@@ -173,7 +173,7 @@ def buildRawDataset(
             scalars="value",
             cmap=cmap,
             opacity=opac * 255,
-            shade=True,
+            # shade=True,
             render=False,
         )
         headlight = pv.Light(light_type='headlight')

@@ -26,7 +26,7 @@ from torchvision.utils import save_image, make_grid
 from lpipsPyTorch import lpips
 
 
-def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams, is_phong=False):
+def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams, is_phong=False, is_scalar=False):
     
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
@@ -301,6 +301,9 @@ def save_training_vis(viewpoint_cam, gaussians, background, render_fn, pipe, opt
                 render_pkg["pseudo_normal"] * 0.5 + 0.5,
             ]
 
+            if is_scalar:
+                visualization_list.append(render_pkg["color_render"])
+
             if is_phong:
                 visualization_list.extend([
                     render_pkg["offset_color"],
@@ -394,7 +397,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument('--gui', action='store_false', default=True, help="use gui")
-    parser.add_argument('-t', '--type', choices=['render', 'normal', 'phong'], default='render')
+    parser.add_argument('-t', '--type', choices=['render', 'normal', 'phong', 'scalar'], default='render')
     parser.add_argument("--test_interval", type=int, default=2500)
     parser.add_argument("--save_interval", type=int, default=5000)
     parser.add_argument("--quiet", action="store_true")
@@ -413,7 +416,8 @@ if __name__ == "__main__":
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
     is_phong = args.type in ['phong']
-    training(lp.extract(args), op.extract(args), pp.extract(args), is_phong=is_phong)
+    is_scalar = args.type in ['scalar']
+    training(lp.extract(args), op.extract(args), pp.extract(args), is_phong=is_phong, is_scalar=is_scalar)
 
     # All done
     print("\nTraining complete.")

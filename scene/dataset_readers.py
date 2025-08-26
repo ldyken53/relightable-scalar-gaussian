@@ -44,6 +44,7 @@ class CameraInfo(NamedTuple):
     image_mask: np.array = None
 
 
+
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
     train_cameras: list

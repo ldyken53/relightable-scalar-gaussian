@@ -3,12 +3,13 @@ from torch import nn
 import torch.nn.functional as F
 import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix, getProjectionMatrixCenterShift
+import matplotlib.pyplot as plt
 
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, fx, fy, cx, cy, image, image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device="cuda", hdr=False,
-                 height=None, width=None, depth=None, normal=None, image_mask=None):
+                 height=None, width=None, depth=None, normal=None, image_mask=None, colormap=None):
         super(Camera, self).__init__()
 
         self.uid = uid
@@ -53,6 +54,14 @@ class Camera(nn.Module):
             self.image_mask = image_mask
         else:
             self.image_mask = torch.ones_like(self.depth)
+
+        if colormap is not None:
+            self.colormap = colormap
+        else:
+            cmap = plt.cm.get_cmap("rainbow")
+            control_points = np.linspace(0.0, 1.0, 100)
+            colors = cmap(control_points)[:, :3]
+            self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
 
         self.zfar = 100.0
         self.znear = 0.01

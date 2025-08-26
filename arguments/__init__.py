@@ -43,7 +43,7 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self._resolution = -1
-        self._white_background = True # default: False
+        self._white_background = False # default: False
         self.data_device = "cuda"
         self.eval = False
         self.debug_cuda = False
@@ -85,6 +85,7 @@ class OptimizationParams(ParamGroup):
         self.normal_lr = 0.01
         self.sh_lr = 0.0025
         self.opacity_lr = 0.05
+        self.scalar_lr = 0.05
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
         #* this is for learnable lighting transform
