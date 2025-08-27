@@ -5,7 +5,7 @@ from gaussian_renderer.render_scalar import render_scalar
 
 render_fn_dict = {
     "render": render,
-    "scalar": render_scalar,
+    "scalar_render": render_scalar,
     "phong": render_neilf,
     "inverse": render_neilf_inverse,
 }
