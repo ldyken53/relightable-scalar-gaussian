@@ -364,24 +364,23 @@ def readRawInfo(path, white_background, eval, extension=".png", debug=False):
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
     ply_path = os.path.join(path, "points3d.ply")
-    if not os.path.exists(ply_path):
-        # Since this data set has no colmap data, we start with random points
-        num_pts = 100_000
-        print(f"Generating random point cloud ({num_pts})...")
 
-        # We create random points inside the bounds of the Pyvista volume scenes
-        bbox_min = np.array([0.0, 0.0, 3.0])
-        bbox_max = np.array([1.0, 1.0, 4.0])
-        pad = 0.05 * (bbox_max - bbox_min).max()
-        bbox_min -= pad
-        bbox_max += pad
+    num_pts = 100_000
+    print(f"Generating random point cloud ({num_pts})...")
 
-        xyz = np.random.rand(num_pts, 3) * (bbox_max - bbox_min) + bbox_min
-        shs = np.random.random((num_pts, 3)) / 255.0
-        normals = np.random.randn(*xyz.shape)
-        normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+    # We create random points inside the bounds of the Pyvista volume scenes
+    bbox_min = np.array([0.0, 0.0, 3.0])
+    bbox_max = np.array([1.0, 1.0, 4.0])
+    pad = 0.01 * (bbox_max - bbox_min).max()
+    bbox_min -= pad
+    bbox_max += pad
 
-        storePly(ply_path, xyz, SH2RGB(shs) * 255, normals)
+    xyz = np.random.rand(num_pts, 3) * (bbox_max - bbox_min) + bbox_min
+    shs = np.random.random((num_pts, 3)) / 255.0
+    normals = np.random.randn(*xyz.shape)
+    normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+
+    storePly(ply_path, xyz, SH2RGB(shs) * 255, normals)
 
     try:
         pcd = fetchPly(ply_path)
