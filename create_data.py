@@ -89,8 +89,9 @@ def buildRawDataset(
     else: 
         indices = np.linspace(0, 1, num_points)
         step_size = 1.0 / num_maps
+        eps = 1e-4
         for step in range(num_maps):
-            center = step * step_size + step_size / 2
+            center = step * step_size + step_size / 2 + eps
             arr = np.zeros(num_points, dtype=np.float32)
             
             for i, x in enumerate(indices):

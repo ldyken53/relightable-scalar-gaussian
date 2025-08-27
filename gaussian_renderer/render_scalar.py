@@ -36,7 +36,7 @@ class LUTColour(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_rgb):
         c0, c1 = ctx.saved_tensors        # neither depends on s
-        slope = (c1 - c0) / 99.0         # (N,3)  dRGB/ds inside segment
+        slope = (c1 - c0) * 99.0         # (N,3)  dRGB/ds inside segment
 
         # chain rule:  dL/ds = <dL/dRGB , dRGB/ds>
         grad_s = (grad_rgb * slope).sum(dim=-1, keepdim=True)     # (N,1)
@@ -76,7 +76,7 @@ class LUTOpacity(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_opac):
         c0, c1 = ctx.saved_tensors        # neither depends on s
-        slope = (c1 - c0) / 99.0         # (N,1)  dO/ds inside segment
+        slope = (c1 - c0) * 99.0         # (N,1)  dO/ds inside segment
 
         # chain rule:  dL/ds = <dL/dO , dO/ds>
         grad_s = grad_opac * slope    # (N,1)
@@ -130,8 +130,8 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
     means3D = pc.get_xyz
     means2D = screenspace_points #* this is zero tensor now, will be updated by rasterizer
-    opacity = pc.get_opacity
-    # opacity = scalar2opac(pc.get_scalar, camera.opac_map)
+    # opacity = pc.get_opacity
+    opacity = scalar2opac(pc.get_scalar, camera.opac_map)
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -161,7 +161,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     else:
         colors_precomp = override_color
 
-    scalar_color = scalar2rgb(pc.get_scalar, camera.colormap)
+    scalar_color = scalar2rgb(pc.get_scalar2, camera.colormap)
     normal = pc.get_normal
     features = torch.cat([scalar_color, normal], dim=-1)
 
