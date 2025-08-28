@@ -60,22 +60,16 @@ class ScalarGaussianModel:
         self.inverse_scalar_activation = inverse_sigmoid
 
         if self.use_phong:
-            self.offset_color_activation = torch.sigmoid
-            self.inverse_offset_color_activation = inverse_sigmoid
             self.diffuse_factor_activation = torch.sigmoid
             self.shininess_activation = torch.sigmoid
             self.ambient_activation = torch.sigmoid
             self.specular_factor_activation = torch.sigmoid
 
-    def __init__(self, sh_degree: int, render_type='render'):
+    def __init__(self, render_type='render'):
         self.render_type = render_type
         self.use_phong = render_type in ['phong']
-        self.active_sh_degree = 0
-        self.max_sh_degree = sh_degree
         self._xyz = torch.empty(0)
         self._normal = torch.empty(0)  # normal
-        self._shs_dc = torch.empty(0)  # output radiance
-        self._shs_rest = torch.empty(0)  # output radiance
         self._scaling = torch.empty(0)
         self._scaling_q = torch.empty(0)
         self._rotation = torch.empty(0) # quaternion 4-dim
@@ -95,8 +89,6 @@ class ScalarGaussianModel:
         self.transform = {}
 
         if self.use_phong:
-            self.palette_color = torch.empty(0) #* this is one global parameter for all GS in this TF scene
-            self._offset_color = torch.empty(0) #* actually offset color
             self._diffuse_factor = torch.empty(0) 
             self._shininess = torch.empty(0) 
             self._ambient_factor = torch.empty(0) 
@@ -140,11 +132,8 @@ class ScalarGaussianModel:
 
     def capture(self):
         captured_list = [
-            self.active_sh_degree,
             self._xyz,
             self._normal,
-            self._shs_dc,
-            self._shs_rest,
             self._scaling,
             self._rotation,
             self._opacity,
@@ -159,7 +148,6 @@ class ScalarGaussianModel:
         ]
         if self.use_phong:
             captured_list.extend([
-                self._offset_color, # 3
                 self._diffuse_factor, # 1
                 self._shininess, # 1
                 self._ambient_factor, # 1
@@ -170,11 +158,8 @@ class ScalarGaussianModel:
 
     def restore(self, model_args, training_args,
                 is_training=False, restore_optimizer=True):
-        (self.active_sh_degree,
-         self._xyz,
+        (self._xyz,
          self._normal,
-         self._shs_dc,
-         self._shs_rest,
          self._scaling,
          self._rotation,
          self._opacity,
@@ -185,13 +170,12 @@ class ScalarGaussianModel:
          opt_dict,
          self.spatial_lr_scale,
          self._scalar,
-         self._scalar2) = model_args[:16]
-        if len(model_args) > 16 and self.use_phong:
-            (self._offset_color,
-             self._diffuse_factor,
+         self._scalar2) = model_args[:13]
+        if len(model_args) > 13 and self.use_phong:
+            (self._diffuse_factor,
              self._shininess,
              self._ambient_factor,
-             self._specular_factor) = model_args[16:]
+             self._specular_factor) = model_args[13:]
 
         if is_training:
             self.training_setup(training_args)
@@ -248,15 +232,6 @@ class ScalarGaussianModel:
     @property
     def get_normal(self):
         return self.normal_activation(self._normal)
-
-    @property
-    def get_shs(self):
-        """SH"""
-        shs_dc = self._shs_dc
-        shs_rest = self._shs_rest
-        # ic(shs_dc.shape)
-        # ic(shs_rest.shape)
-        return torch.cat((shs_dc, shs_rest), dim=1)
     
     @property
     def get_opacity(self):
@@ -269,15 +244,6 @@ class ScalarGaussianModel:
     @property
     def get_scalar2(self):
         return self.scalar_activation(self._scalar2)
-    
-    @property
-    def get_palette_color(self):
-        return self.palette_color
-
-    @property
-    def get_offset_color(self):
-        return self.offset_color_activation(self._offset_color)
-        # return self._offset_color
     
 
     def get_by_names(self, names):
@@ -307,24 +273,18 @@ class ScalarGaussianModel:
                                           1 / scaling_modifier,
                                           self.get_rotation)
 
-    def oneupSHdegree(self):
-        if self.active_sh_degree < self.max_sh_degree:
-            self.active_sh_degree += 1
-
     @property
     def attribute_names(self):
-        attribute_names = ['xyz', 'normal', 'shs_dc', 'shs_rest', 'scaling', 'rotation', 'opacity', 'scalar', 'scalar2']
+        attribute_names = ['xyz', 'normal', 'scaling', 'rotation', 'opacity', 'scalar', 'scalar2']
         if self.use_phong:
-            attribute_names.extend(['offset_color', 'diffuse_factor', 'shininess', "ambient_factor", "specular_factor"])
+            attribute_names.extend(['diffuse_factor', 'shininess', "ambient_factor", "specular_factor"])
         return attribute_names
 
     
     @classmethod
     def create_from_gaussians(cls, gaussians_list, dataset):
         assert len(gaussians_list) > 0
-        sh_degree = max(g.max_sh_degree for g in gaussians_list)
-        gaussians = ScalarGaussianModel(sh_degree=sh_degree,
-                                  render_type=gaussians_list[0].render_type)
+        gaussians = ScalarGaussianModel(render_type=gaussians_list[0].render_type)
         attribute_names = gaussians.attribute_names
         num_GSs_TF = [g.get_gaussian_nums for g in gaussians_list]
         # ic("gaussians_nums", num_GSs_TF)
@@ -340,11 +300,8 @@ class ScalarGaussianModel:
     def create_from_ckpt(self, checkpoint_path, restore_optimizer=False):
         (model_args, first_iter) = torch.load(checkpoint_path, weights_only=False)
 
-        (self.active_sh_degree,
-         self._xyz,
+        (self._xyz,
          self._normal,
-         self._shs_dc,
-         self._shs_rest,
          self._scaling,
          self._rotation,
          self._opacity,
@@ -355,26 +312,23 @@ class ScalarGaussianModel:
          opt_dict,
          self.spatial_lr_scale,
          self._scalar,
-        self._scalar2) = model_args[:16]
+        self._scalar2) = model_args[:13]
 
         self.xyz_gradient_accum = xyz_gradient_accum
         self.normal_gradient_accum = normal_gradient_accum
         self.denom = denom
 
         if self.use_phong:
-            if len(model_args) > 16:
-                (self._offset_color,
-                 self._diffuse_factor, 
+            if len(model_args) > 13:
+                (self._diffuse_factor, 
                  self._shininess,
                  self._ambient_factor,
-                 self._specular_factor) = model_args[16:]
+                 self._specular_factor) = model_args[13:]
             else: #* default init all zeros
-                self._offset_color = nn.Parameter(torch.zeros_like(self._xyz).requires_grad_(True))
                 self._diffuse_factor = nn.Parameter((torch.zeros_like(self._xyz[..., :1])).requires_grad_(True))
                 self._shininess = nn.Parameter(torch.ones_like(self._xyz[..., :1]).requires_grad_(True))
                 self._ambient_factor = nn.Parameter(torch.zeros_like(self._xyz[..., :1]).requires_grad_(True))
                 self._specular_factor = nn.Parameter((torch.zeros_like(self._xyz[..., :1])).requires_grad_(True))
-
 
         if restore_optimizer:
             # TODO automatically match the opt_dict
@@ -390,10 +344,6 @@ class ScalarGaussianModel:
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         print(f"min and max: {fused_point_cloud.max()} {fused_point_cloud.min()}")
         fused_normal = torch.tensor(np.asarray(pcd.normals)).float().cuda()
-        fused_color = torch.tensor(np.asarray(pcd.colors)).float().cuda()
-        shs = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
-        shs[:, :3, 0] = RGB2SH(fused_color)
-        shs[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
@@ -409,8 +359,6 @@ class ScalarGaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
-        self._shs_dc = nn.Parameter(shs[:, :, 0:1].transpose(1, 2).contiguous().requires_grad_(True))
-        self._shs_rest = nn.Parameter(shs[:, :, 1:].transpose(1, 2).contiguous().requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
         scalars = inverse_sigmoid(0.5 + (torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") - 0.5) * 2 * 0.1)
@@ -418,13 +366,11 @@ class ScalarGaussianModel:
         self._scalar2 = nn.Parameter(scalars.clone().requires_grad_(True))
 
         if self.use_phong: #* default init all zeros
-            offset_color = torch.zeros_like(fused_point_cloud)
             diffuse_factor = torch.zeros((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
             shininess = torch.zeros((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
             ambient = torch.zeros((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
             specular = torch.zeros((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")
 
-            self._offset_color = nn.Parameter(offset_color.requires_grad_(True))
             self._diffuse_factor = nn.Parameter(diffuse_factor.requires_grad_(True))
             self._shininess = nn.Parameter(shininess.requires_grad_(True))
             self._ambient_factor = nn.Parameter(ambient.requires_grad_(True))
@@ -443,15 +389,12 @@ class ScalarGaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
-            {'params': [self._shs_dc], 'lr': training_args.sh_lr, "name": "f_dc"},
-            {'params': [self._shs_rest], 'lr': training_args.sh_lr / 20.0, "name": "f_rest"},
             {'params': [self._scalar], 'lr': training_args.scalar_lr, "name": "scalar"},
             {'params': [self._scalar2], 'lr': training_args.scalar_lr, "name": "scalar2"}
         ]
 
         if self.use_phong:
             l.extend([
-                {'params': [self._offset_color], 'lr': training_args.offset_color_lr, "name": "offset_color"}, 
                 {'params': [self._diffuse_factor], 'lr': training_args.diffuse_factor_lr, "name": "diffuse_factor"},
                 {'params': [self._shininess], 'lr': training_args.shininess_lr, "name": "shininess"},
                 {'params': [self._ambient_factor], 'lr': training_args.ambient_lr, "name": "ambient_factor"},
@@ -479,17 +422,10 @@ class ScalarGaussianModel:
     def construct_list_of_attributes(self): #todo: when you save ply, elements should keep this order
         # l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         l = ['x', 'y', 'z']
-        # All channels except the 3 DC
-        if not self.use_phong:
-            for i in range(self._shs_dc.shape[1] * self._shs_dc.shape[2]):
-                l.append('f_dc_{}'.format(i))
-            for i in range(self._shs_rest.shape[1] * self._shs_rest.shape[2]):
-                l.append('f_rest_{}'.format(i))
         l.append('opacity')
         for i in range(self._normal.shape[1]): 
             # ic('normal_{}'.format(i))
             l.append('normal_{}'.format(i)) # normal_0, normal_1, normal_2
-        # exit()
         for i in range(self._scaling.shape[1]):
             l.append('scale_{}'.format(i)) # scale_0, scale_1, scale_2
         for i in range(self._rotation.shape[1]): 
@@ -497,8 +433,6 @@ class ScalarGaussianModel:
         l.append('scalar')
         l.append('scalar2')
         if self.use_phong:
-            for i in range(self._offset_color.shape[1]):
-                l.append('offset_color_{}'.format(i))
             l.append('diffuse_factor')
             l.append('shininess')
             l.append('ambient_factor') #* _ambient_factor
@@ -523,7 +457,6 @@ class ScalarGaussianModel:
             rot = torch.cat((self._codebook_dict["rotation_re"].ids,
                             self._codebook_dict["rotation_im"].ids),
                             dim=1)
-            offset_color = self._codebook_dict["offset_color"].ids
             diffuse_factor = self._codebook_dict["diffuse_factor"].ids
             shininess = self._codebook_dict["shininess"].ids
             ambient_factor = self._codebook_dict["ambient_factor"].ids
@@ -550,7 +483,6 @@ class ScalarGaussianModel:
             opacity = self._opacity
             scaling = self._scaling
             rot = self._rotation
-            offset_color = self._offset_color
             diffuse_factor = self._diffuse_factor
             shininess = self._shininess
             ambient_factor = self._ambient_factor
@@ -570,7 +502,6 @@ class ScalarGaussianModel:
         scaling = scaling.detach().cpu().numpy()
         normal = normal.detach().cpu().numpy()#* quantised normal
         rotation = rot.detach().cpu().numpy()
-        offset_color = offset_color.detach().cpu().numpy()
         diffuse_factor = diffuse_factor.detach().cpu().numpy()
         shininess = shininess.detach().cpu().numpy()
         ambient_factor = ambient_factor.detach().cpu().numpy()
@@ -585,12 +516,10 @@ class ScalarGaussianModel:
                         if attribute in ['x', 'y', 'z'] else (attribute, attribute_type) 
                         for attribute in self.construct_list_of_attributes()]
         gaussian_nums = xyz.shape[0]
-        # ic(dtype_full)
-        # ic(scale.shape[0])
+
         elements = np.empty(gaussian_nums, dtype=dtype_full)
         #!Note: the order need to be aligned with the order of construct_list_of_attributes
-        # attributes = np.concatenate((xyz, normal, opacities, scaling, rotation, offset_color, diffuse_factor, shininess, ambient_factor, specular_factor), axis=1)
-        attributes = np.concatenate((xyz, opacities, normal, scaling, rotation, offset_color, diffuse_factor, shininess, ambient_factor, specular_factor, scalar, scalar2), axis=1)
+        attributes = np.concatenate((xyz, opacities, normal, scaling, rotation, diffuse_factor, shininess, ambient_factor, specular_factor, scalar, scalar2), axis=1)
         elements[:] = list(map(tuple, attributes))
         elements_list.append(PlyElement.describe(elements, f'gaussians'))
             
@@ -603,11 +532,9 @@ class ScalarGaussianModel:
     def _parse_codebook(self,vertex_group,
                             float_type,
                             attribute_type,
-                            max_coeffs_num,
                             quantised,
                             half_precision,                            
                             codebook_centers_torch=None):
-        # coeffs_num = (sh_degree+1)**2 - 1
         num_primitives = vertex_group.count
 
         xyz = np.stack((np.asarray(vertex_group["x"], dtype=float_type),
@@ -629,7 +556,6 @@ class ScalarGaussianModel:
         scaling = stack_vector_attribute("scale", 3)
         normal = stack_vector_attribute("normal", 3) #* quantised normal
         rotation = stack_vector_attribute("rot", 4)
-        offset_color = stack_vector_attribute("offset_color", 3)
         diffuse_factor = np.asarray(vertex_group["diffuse_factor"], dtype=attribute_type)[..., np.newaxis]
         shininess = np.asarray(vertex_group["shininess"], dtype=attribute_type)[..., np.newaxis]
         ambient_factor = np.asarray(vertex_group["ambient_factor"], dtype=attribute_type)[..., np.newaxis]
@@ -647,7 +573,6 @@ class ScalarGaussianModel:
         scaling = torch.from_numpy(scaling).cuda()
         rotation = torch.from_numpy(rotation).cuda()
         normal = torch.from_numpy(normal).cuda() #* quantised normal
-        offset_color = torch.from_numpy(offset_color).cuda()
         diffuse_factor = torch.from_numpy(diffuse_factor).cuda()
         shininess = torch.from_numpy(shininess).cuda()
         ambient_factor = torch.from_numpy(ambient_factor).cuda()
@@ -670,7 +595,6 @@ class ScalarGaussianModel:
                 codebook_centers_torch['rotation_re'][rotation[:, 0:1].long()],
                 codebook_centers_torch['rotation_im'][rotation[:, 1:].reshape(num_primitives*3).long()].view(num_primitives,3)
                 ), dim=1)
-            offset_color = codebook_centers_torch['offset_color'][offset_color.view(num_primitives*3).long()].view(num_primitives, 3)
             diffuse_factor = codebook_centers_torch['diffuse_factor'][diffuse_factor.long()]
             shininess = codebook_centers_torch['shininess'][shininess.long()]
             ambient_factor = codebook_centers_torch['ambient_factor'][ambient_factor.long()]
@@ -684,7 +608,6 @@ class ScalarGaussianModel:
                 'opacity': opacity,
                 'scaling': scaling,
                 'rotation': rotation,
-                'offset_color': offset_color,
                 'diffuse_factor': diffuse_factor,
                 'shininess': shininess,
                 'ambient_factor': ambient_factor,
@@ -701,7 +624,6 @@ class ScalarGaussianModel:
         opacity_list = []
         scaling_list = []
         rotation_list = []
-        offset_color_list = []
         diffuse_factor_list = []
         shininess_list = []
         ambient_factor_list = []
@@ -711,7 +633,6 @@ class ScalarGaussianModel:
 
         float_type = 'int16' if half_float else 'f4'
         attribute_type = 'u1' if quantised else float_type
-        max_coeffs_num = (self.max_sh_degree+1)**2 - 1
 
         codebook_centers_torch = None
         if quantised:
@@ -720,7 +641,6 @@ class ScalarGaussianModel:
             # In the future we could have different number of centers
             
             codebook_centers = plydata.elements[-1]
-            
 
             codebook_centers_torch = OrderedDict()
 
@@ -729,7 +649,6 @@ class ScalarGaussianModel:
             codebook_centers_torch['normal'] = torch.from_numpy(np.asarray(codebook_centers['normal'], dtype=float_type)).cuda()
             codebook_centers_torch['rotation_re'] = torch.from_numpy(np.asarray(codebook_centers['rotation_re'], dtype=float_type)).cuda()
             codebook_centers_torch['rotation_im'] = torch.from_numpy(np.asarray(codebook_centers['rotation_im'], dtype=float_type)).cuda()
-            codebook_centers_torch['offset_color'] = torch.from_numpy(np.asarray(codebook_centers['offset_color'], dtype=float_type)).cuda()
             codebook_centers_torch['diffuse_factor'] = torch.from_numpy(np.asarray(codebook_centers['diffuse_factor'], dtype=float_type)).cuda()
             codebook_centers_torch['shininess'] = torch.from_numpy(np.asarray(codebook_centers['shininess'], dtype=float_type)).cuda()
             codebook_centers_torch['ambient_factor'] = torch.from_numpy(np.asarray(codebook_centers['ambient_factor'], dtype=float_type)).cuda()
@@ -746,27 +665,25 @@ class ScalarGaussianModel:
 
             # Iterate over the point clouds that are stored on top level of plyfile
             # to get the various fields values 
-        attribues_dict = self._parse_codebook(plydata.elements[0],
+        attributes_dict = self._parse_codebook(plydata.elements[0],
                                                     float_type,
                                                     attribute_type,
-                                                    max_coeffs_num,
                                                     quantised,
                                                     half_float,
                                                     codebook_centers_torch)
 
-        xyz_list.append(attribues_dict['xyz'])
-        normal_list.append(attribues_dict['normal']) #* quantised normal
+        xyz_list.append(attributes_dict['xyz'])
+        normal_list.append(attributes_dict['normal']) #* quantised normal
 
-        opacity_list.append(attribues_dict['opacity'])
-        scaling_list.append(attribues_dict['scaling'])
-        rotation_list.append(attribues_dict['rotation'])
-        offset_color_list.append(attribues_dict['offset_color'])
-        diffuse_factor_list.append(attribues_dict['diffuse_factor'])
-        shininess_list.append(attribues_dict['shininess'])
-        ambient_factor_list.append(attribues_dict['ambient_factor'])
-        specular_factor_list.append(attribues_dict['specular_factor'])
-        scalar_list.append(attribues_dict['scalar'])
-        scalar2_list.append(attribues_dict['scalar2'])
+        opacity_list.append(attributes_dict['opacity'])
+        scaling_list.append(attributes_dict['scaling'])
+        rotation_list.append(attributes_dict['rotation'])
+        diffuse_factor_list.append(attributes_dict['diffuse_factor'])
+        shininess_list.append(attributes_dict['shininess'])
+        ambient_factor_list.append(attributes_dict['ambient_factor'])
+        specular_factor_list.append(attributes_dict['specular_factor'])
+        scalar_list.append(attributes_dict['scalar'])
+        scalar2_list.append(attributes_dict['scalar2'])
         
         # Concatenate the tensors into one, to be used in our program
         xyz = torch.cat((xyz_list), dim=0)
@@ -775,7 +692,6 @@ class ScalarGaussianModel:
         opacity = torch.cat((opacity_list), dim=0)
         scaling = torch.cat((scaling_list), dim=0)
         rotation = torch.cat((rotation_list), dim=0)
-        offset_color = torch.cat((offset_color_list), dim=0)
         diffuse_factor = torch.cat((diffuse_factor_list), dim=0)
         shininess = torch.cat((shininess_list), dim=0)
         ambient_factor = torch.cat((ambient_factor_list), dim=0)
@@ -811,20 +727,12 @@ class ScalarGaussianModel:
         self._opacity = nn.Parameter(opacity.requires_grad_(True))
         self._scaling = nn.Parameter(scaling.requires_grad_(True))
         self._rotation = nn.Parameter(rotation.requires_grad_(True))
-        self._offset_color = nn.Parameter(offset_color.requires_grad_(True))
         self._diffuse_factor = nn.Parameter(diffuse_factor.requires_grad_(True))
         self._shininess = nn.Parameter(shininess.requires_grad_(True))
         self._ambient_factor = nn.Parameter(ambient_factor.requires_grad_(True))
         self._specular_factor = nn.Parameter(specular_factor.requires_grad_(True))
         self._scalar = nn.Parameter(scalar.requires_grad_(True))
         self._scalar2 = nn.Parameter(scalar2.requires_grad_(True))
-
-        #* dummy load initial value
-        self._shs_dc = nn.Parameter(torch.zeros(
-        (xyz.shape[0], 1, 3), dtype=torch.float, device="cuda").contiguous().requires_grad_(True))
-        self._shs_rest = nn.Parameter(torch.zeros(
-        (xyz.shape[0], (self.active_sh_degree+1)**2-1, 3), dtype=torch.float, device="cuda").contiguous().requires_grad_(True))
-        self.active_sh_degree = self.max_sh_degree
 
 
     def reset_opacity(self):
@@ -872,8 +780,6 @@ class ScalarGaussianModel:
 
         self._xyz = optimizable_tensors["xyz"]
         self._normal = optimizable_tensors["normal"]
-        self._shs_dc = optimizable_tensors["f_dc"]
-        self._shs_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -887,15 +793,10 @@ class ScalarGaussianModel:
         self._scalar2 = optimizable_tensors["scalar2"]
 
         if self.use_phong:
-            self._offset_color = optimizable_tensors["offset_color"]
             self._diffuse_factor = optimizable_tensors["diffuse_factor"]
             self._shininess = optimizable_tensors["shininess"]
             self._ambient_factor = optimizable_tensors["ambient_factor"]
             self._specular_factor = optimizable_tensors["specular_factor"]
-            # self._incidents_dc = optimizable_tensors["incidents_dc"]
-            # self._incidents_rest = optimizable_tensors["incidents_rest"]
-            # self._visibility_dc = optimizable_tensors["visibility_dc"]
-            # self._visibility_rest = optimizable_tensors["visibility_rest"]
             
 
     def cat_tensors_to_optimizer(self, tensors_dict):
@@ -929,31 +830,23 @@ class ScalarGaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_normal, new_shs_dc, new_shs_rest, new_opacities, new_scaling,
-                              new_rotation, new_offset_color=None, new_diffuse_factor=None,
-                              new_shininess=None, new_ambient_factor=None, new_specular_factor=None, new_scalar=None, new_scalar2=None, new_incidents_dc=None, new_incidents_rest=None,
-                              new_visibility_dc=None, new_visibility_rest=None):
+    def densification_postfix(self, new_xyz, new_normal, new_opacities, new_scaling, new_rotation, 
+                              new_diffuse_factor=None, new_shininess=None, new_ambient_factor=None, 
+                              new_specular_factor=None, new_scalar=None, new_scalar2=None):
         d = {
             "xyz": new_xyz,
             "normal": new_normal,
             "rotation": new_rotation,
             "scaling": new_scaling,
             "opacity": new_opacities,
-            "f_dc": new_shs_dc,
-            "f_rest": new_shs_rest,
             "scalar": new_scalar,
             "scalar2": new_scalar2
         }
 
         if self.use_phong:
             d.update({
-                "offset_color": new_offset_color,
                 "diffuse_factor": new_diffuse_factor,
                 "shininess": new_shininess,
-                # "incidents_dc": new_incidents_dc,
-                # "incidents_rest": new_incidents_rest,
-                # "visibility_dc": new_visibility_dc,
-                # "visibility_rest": new_visibility_rest,
                 "ambient_factor": new_ambient_factor,
                 "specular_factor": new_specular_factor
             })
@@ -965,8 +858,6 @@ class ScalarGaussianModel:
         self._rotation = optimizable_tensors["rotation"]
         self._scaling = optimizable_tensors["scaling"]
         self._opacity = optimizable_tensors["opacity"]
-        self._shs_dc = optimizable_tensors["f_dc"]
-        self._shs_rest = optimizable_tensors["f_rest"]
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.normal_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -977,15 +868,11 @@ class ScalarGaussianModel:
         self._scalar2 = optimizable_tensors["scalar2"]
 
         if self.use_phong:
-            self._offset_color = optimizable_tensors["offset_color"]
             self._diffuse_factor = optimizable_tensors["diffuse_factor"]
             self._shininess = optimizable_tensors["shininess"]
             self._ambient_factor = optimizable_tensors["ambient_factor"]
             self._specular_factor = optimizable_tensors["specular_factor"]
-            # self._incidents_dc = optimizable_tensors["incidents_dc"]
-            # self._incidents_rest = optimizable_tensors["incidents_rest"]
-            # self._visibility_dc = optimizable_tensors["visibility_dc"]
-            # self._visibility_rest = optimizable_tensors["visibility_rest"]
+
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, grads_normal, grad_normal_threshold, N=2):
         n_init_points = self.get_xyz.shape[0]
@@ -1012,15 +899,11 @@ class ScalarGaussianModel:
         new_normal = self._normal[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N, 1) / (0.8 * N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N, 1)
-        new_shs_dc = self._shs_dc[selected_pts_mask].repeat(N, 1, 1)
-        new_shs_rest = self._shs_rest[selected_pts_mask].repeat(N, 1, 1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N, 1)
 
         kwargs = {
             "new_xyz": new_xyz,
             "new_normal": new_normal,
-            "new_shs_dc": new_shs_dc,
-            "new_shs_rest": new_shs_rest,
             "new_opacities": new_opacity,
             "new_scaling": new_scaling,
             "new_rotation": new_rotation,
@@ -1031,7 +914,6 @@ class ScalarGaussianModel:
 
         if self.use_phong:
             kwargs.update(
-                new_offset_color = self._offset_color[selected_pts_mask].repeat(N, 1),
                 new_diffuse_factor = self._diffuse_factor[selected_pts_mask].repeat(N, 1),
                 new_shininess = self._shininess[selected_pts_mask].repeat(N, 1),
                 new_ambient_factor = self._ambient_factor[selected_pts_mask].repeat(N, 1),
@@ -1057,8 +939,6 @@ class ScalarGaussianModel:
 
         new_xyz = self._xyz[selected_pts_mask]
         new_normal = self._normal[selected_pts_mask]
-        new_shs_dc = self._shs_dc[selected_pts_mask]
-        new_shs_rest = self._shs_rest[selected_pts_mask]
         new_opacity = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
@@ -1066,8 +946,6 @@ class ScalarGaussianModel:
         kwargs = {
             "new_xyz": new_xyz,
             "new_normal": new_normal,
-            "new_shs_dc": new_shs_dc,
-            "new_shs_rest": new_shs_rest,
             "new_opacities": new_opacity,
             "new_scaling": new_scaling,
             "new_rotation": new_rotation,
@@ -1078,7 +956,6 @@ class ScalarGaussianModel:
 
         if self.use_phong:
             kwargs.update(
-                new_offset_color = self._offset_color[selected_pts_mask],
                 new_diffuse_factor = self._diffuse_factor[selected_pts_mask],
                 new_shininess = self._shininess[selected_pts_mask],
                 new_ambient_factor = self._ambient_factor[selected_pts_mask],
@@ -1138,19 +1015,13 @@ class ScalarGaussianModel:
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
-        if not self.use_phong:
-            sh_dc = self._shs_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-            sh_rest = self._shs_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
-            attributes_list = [xyz, normal, sh_dc, sh_rest, opacities, scale, rotation]
-        else:
-            attributes_list = [xyz, normal, opacities, scale, rotation]
+        attributes_list = [xyz, normal, opacities, scale, rotation]
         attributes_list.extend([
             self._scalar.detach().cpu().numpy(),
             self._scalar2.detach().cpu().numpy()
         ])
         if self.use_phong:
             attributes_list.extend([
-                self._offset_color.detach().cpu().numpy(),
                 self._diffuse_factor.detach().cpu().numpy(),
                 self._shininess.detach().cpu().numpy(),
                 self._ambient_factor.detach().cpu().numpy(),
@@ -1186,8 +1057,6 @@ class ScalarGaussianModel:
                                                     num_clusters=num_clusters)
 
         #* Phong attributes
-        codebook_dict["offset_color"] = generate_codebook(self.get_offset_color.detach(),
-                                                           self.inverse_offset_color_activation,num_clusters=num_clusters)
         codebook_dict["diffuse_factor"] = generate_codebook(self.get_diffuse_factor.detach(),
                                                             num_clusters=num_clusters)
         codebook_dict["shininess"] = generate_codebook(self.get_shininess.detach(),
@@ -1204,7 +1073,6 @@ class ScalarGaussianModel:
         
     #todo: this is new
     def apply_clustering(self, codebook_dict=None):
-        # max_coeffs_num = (self.max_sh_degree + 1)**2 - 1
         if codebook_dict is None:
             return
 
@@ -1218,7 +1086,6 @@ class ScalarGaussianModel:
         scalar = codebook_dict["scalar"].evaluate().requires_grad_(True)
         scalar2 = codebook_dict["scalar2"].evaluate().requires_grad_(True)
 
-        offset_color = codebook_dict["offset_color"].evaluate().view(-1, 3).requires_grad_(True)
         diffuse_factor = codebook_dict["diffuse_factor"].evaluate().requires_grad_(True)
         shininess = codebook_dict["shininess"].evaluate().requires_grad_(True)
         ambient_factor = codebook_dict["ambient_factor"].evaluate().requires_grad_(True)
@@ -1240,7 +1107,6 @@ class ScalarGaussianModel:
             self._normal = normal
             self._scalar = scalar
             self._scalar2 = scalar2
-            self._offset_color = offset_color
             self._diffuse_factor = diffuse_factor
             self._shininess = shininess
             self._ambient_factor = ambient_factor
@@ -1253,7 +1119,6 @@ class ScalarGaussianModel:
         self._normal.requires_grad_(False)
         self._scalar.requires_grad_(False)
         self._scalar2.requires_grad_(False)
-        self._offset_color.requires_grad_(False)
         self._diffuse_factor.requires_grad_(False)
         self._shininess.requires_grad_(False)
         self._ambient_factor.requires_grad_(False)

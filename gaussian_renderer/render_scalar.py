@@ -117,7 +117,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
         scale_modifier=scaling_modifier,
         viewmatrix=camera.world_view_transform,
         projmatrix=camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
+        sh_degree=0,
         campos=camera.camera_center,
         prefiltered=False,
         backward_geometry=True,
@@ -130,8 +130,8 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
     means3D = pc.get_xyz
     means2D = screenspace_points #* this is zero tensor now, will be updated by rasterizer
-    # opacity = pc.get_opacity
-    opacity = scalar2opac(pc.get_scalar, camera.opac_map)
+    opacity = pc.get_opacity
+    # opacity = scalar2opac(pc.get_scalar, camera.opac_map)
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -145,21 +145,11 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
         rotations = pc.get_rotation
     
     
-    # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
-    # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+    # Just use white as debug color
     shs = None
-    colors_precomp = None
-    if override_color is None:
-        if pipe.compute_SHs_python:
-            shs_view = pc.get_shs.transpose(1, 2).view(-1, 3, (pc.max_sh_degree + 1) ** 2)
-            dir_pp = (pc.get_xyz - camera.camera_center.repeat(pc.get_shs.shape[0], 1))
-            dir_pp_normalized = dir_pp / dir_pp.norm(dim=1, keepdim=True)
-            sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
-            colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
-        else:
-            shs = pc.get_shs
-    else:
-        colors_precomp = override_color
+    colors_precomp = torch.ones(
+        (means3D.shape[0], 3),
+        device="cuda", dtype=means3D.dtype)
 
     scalar_color = scalar2rgb(pc.get_scalar2, camera.colormap)
     normal = pc.get_normal

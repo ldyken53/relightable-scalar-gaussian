@@ -14,10 +14,89 @@ from .diff_rasterization import GaussianRasterizationSettings, GaussianRasterize
     RenderEquation_complex
 
 
+class LUTColour(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, s, lut):                    # s shape (N,1), lut (100,3)
+        """
+        s assumed in [0,1]; lut fixed length 100.
+        Returns RGB (N,3) by linear interpolation between neighbours.
+        """
+        # scale to [0,99]
+        idx = (s.clamp(0, 1) * 99.0).squeeze(-1)          # (N,)
+        idx_floor = torch.floor(idx).long()                # (N,)
+        idx_ceil  = torch.clamp(idx_floor + 1, max=99)    # (N,)
+        t = (idx - idx_floor.float()).unsqueeze(-1)        # (N,1)
+
+        c0 = lut[idx_floor]    # (N,3)  -> constant wrt s inside segment
+        c1 = lut[idx_ceil]     # (N,3)
+        rgb = (1.0 - t) * c0 + t * c1
+
+        # save what we need for backward
+        ctx.save_for_backward(c0, c1)
+        return rgb                                                # (N,3)
+
+    @staticmethod
+    def backward(ctx, grad_rgb):
+        c0, c1 = ctx.saved_tensors        # neither depends on s
+        slope = (c1 - c0) * 99.0         # (N,3)  dRGB/ds inside segment
+
+        # chain rule:  dL/ds = <dL/dRGB , dRGB/ds>
+        grad_s = (grad_rgb * slope).sum(dim=-1, keepdim=True)     # (N,1)
+
+        # lut is constant → no grad (return None)
+        return grad_s, None
+
+
+def scalar2rgb(s, lut):
+    """
+    Wrapper that exposes an nn.Module-like interface.
+    """
+    return LUTColour.apply(s, lut)
+
+
+class LUTOpacity(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, s, lut):                    # s shape (N,1), lut (100,1)
+        """
+        s assumed in [0,1]; lut fixed length 100.
+        Returns opacity (N,1) by linear interpolation between neighbours.
+        """
+        # scale to [0,99]
+        idx = (s.clamp(0, 1) * 99.0).squeeze(-1)          # (N,)
+        idx_floor = torch.floor(idx).long()                # (N,)
+        idx_ceil  = torch.clamp(idx_floor + 1, max=99)    # (N,)
+        t = (idx - idx_floor.float()).unsqueeze(-1)        # (N,1)
+
+        c0 = lut[idx_floor]    # (N,1)  -> constant wrt s inside segment
+        c1 = lut[idx_ceil]     # (N,1)
+        opacity = (1.0 - t) * c0 + t * c1
+
+        # save what we need for backward
+        ctx.save_for_backward(c0, c1)
+        return opacity                                                # (N,1)
+
+    @staticmethod
+    def backward(ctx, grad_opac):
+        c0, c1 = ctx.saved_tensors        # neither depends on s
+        slope = (c1 - c0) * 99.0         # (N,1)  dO/ds inside segment
+
+        # chain rule:  dL/ds = <dL/dO , dO/ds>
+        grad_s = grad_opac * slope    # (N,1)
+
+        # lut is constant → no grad (return None)
+        return grad_s, None
+
+
+def scalar2opac(s, lut):
+    """
+    Wrapper that exposes an nn.Module-like interface.
+    """
+    return LUTOpacity.apply(s, lut)
+
+
 def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
                 scaling_modifier=1.0, override_color=None, is_training=False, dict_params=None, light_pos=None):
     gamma_transform = dict_params.get("gamma")
-    palette_color_transforms = dict_params.get("palette_colors")
     opacity_transforms = dict_params.get("opacity_factors")
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
@@ -45,7 +124,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
         scale_modifier=scaling_modifier,
         viewmatrix=camera.world_view_transform,
         projmatrix=camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
+        sh_degree=0,
         campos=camera.camera_center,
         prefiltered=False,
         backward_geometry=True,
@@ -70,25 +149,13 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
         scales = pc.get_scaling
         rotations = pc.get_rotation
 
-    # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
-    # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
+    # Just use white as debug color
     shs = None
-    colors_precomp = None
-    if override_color is None:
-        if pipe.compute_SHs_python:
-            dir_pp_normalized = F.normalize(camera.camera_center.repeat(means3D.shape[0], 1) - means3D,
-                                            dim=-1)
-            shs_view = pc.get_shs.transpose(1, 2).view(-1, 3, (pc.max_sh_degree + 1) ** 2)
-            sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
-            colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
-        else:
-            shs = pc.get_shs
-    else:
-        colors_precomp = override_color
+    colors_precomp = torch.ones(
+        (means3D.shape[0], 3),
+        device="cuda", dtype=means3D.dtype)
 
-    # palette_color = pc.get_palette_color
-    # palette_color = palette_color_transform.palette_color
-    offset_color = pc.get_offset_color
+    scalar_color = scalar2rgb(pc.get_scalar2, camera.colormap)
     diffuse_factor = pc.get_diffuse_factor
     shininess = pc.get_shininess
     ambient_factor = pc.get_ambient_factor
@@ -108,14 +175,13 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
      
     brdf_color, extra_results, opacity = rendering_equation_BlinnPhong_python(
-        palette_color_transforms, opacity_transforms, opacity, offset_color, diffuse_factor, shininess, ambient_factor, specular_factor, normal, viewdirs, incidents_dirs, num_GSs_TF)
+        opacity_transforms, opacity, scalar_color, diffuse_factor, shininess, ambient_factor, specular_factor, normal, viewdirs, incidents_dirs, num_GSs_TF)
 
 
     if is_training:
-        features = torch.cat([brdf_color, normal, offset_color, diffuse_factor, shininess, ambient_factor, specular_factor,
-                              extra_results['offset_color_norm']], dim=-1)
+        features = torch.cat([brdf_color, normal, scalar_color, diffuse_factor, shininess, ambient_factor, specular_factor], dim=-1)
     else:
-        features = torch.cat([brdf_color, normal, offset_color, diffuse_factor, shininess, ambient_factor, specular_factor,
+        features = torch.cat([brdf_color, normal, scalar_color, diffuse_factor, shininess, ambient_factor, specular_factor,
                               extra_results['diffuse_render'].mean(dim=1),
                               extra_results['specular_render'].mean(dim=1)], dim=-1)
         
@@ -139,29 +205,25 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
     feature_dict = {}
     if is_training:
-        rendered_phong, rendered_normal, rendered_offset_color, \
+        rendered_phong, rendered_normal, rendered_scalar, \
             rendered_diffuse_factor, rendered_shininess, \
             rendered_amibent_factor, rendered_specular_factor, \
-            rendered_offset_color_norm \
-            = rendered_feature.split([3, 3, 3, 1, 1, 1, 1, 1], dim=0)
+            = rendered_feature.split([3, 3, 3, 1, 1, 1, 1], dim=0)
         feature_dict.update({"diffuse_factor": rendered_diffuse_factor,
-                             "offset_color": rendered_offset_color,
                              "shininess": rendered_shininess,
                              "ambient_factor": rendered_amibent_factor,
                              "specular_factor": rendered_specular_factor,
                              #* below are used for calculating distribution loss
                              "ambient_values": ambient_factor,
-                             "offset_color_norm": rendered_offset_color_norm,
                              })
     else:
-        rendered_phong, rendered_normal, rendered_offset_color, \
+        rendered_phong, rendered_normal, rendered_scalar, \
             rendered_diffuse_factor, rendered_shininess, \
             rendered_amibent_factor, rendered_specular_factor, \
             rendered_diffuse_term, rendered_specular_term \
             = rendered_feature.split([3, 3, 3, 1, 1, 1, 1, 3, 3], dim=0)
 
         feature_dict.update({"diffuse_factor": rendered_diffuse_factor,
-                             "offset_color": rendered_offset_color,
                              "shininess": rendered_shininess,
                              "ambient_factor": rendered_amibent_factor,
                              "specular_factor": rendered_specular_factor,
@@ -179,8 +241,9 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     # ic(gamma_transform.gamma)
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
-    results = {"render": rendered_image, 
+    results = {"render": rendered_scalar, 
                "phong": rendered_phong,
+                "color_render": rendered_image,
                "normal": rendered_normal, #* normal
                "pseudo_normal": rendered_pseudo_normal, #* pseudo normal
                "surface_xyz": rendered_surface_xyz, #* surface xyz
@@ -213,7 +276,6 @@ def calculate_loss(camera, pc, results, opt):
     rendered_ambient_intensity = results["ambient_factor"]
     rendered_specular_intensity = results["specular_factor"]
     cur_ambient_factors = results["ambient_values"]
-    rendered_offset_color_norm = results["offset_color_norm"]
     gt_image = camera.original_image.cuda()
     loss = 0.0
     #* OK
@@ -283,12 +345,6 @@ def calculate_loss(camera, pc, results, opt):
             rendered_normal * depth_mask, mvs_normal * depth_mask)
         tb_dict["loss_normal_mvs_depth"] = loss_normal_mvs_depth.item()
         loss = loss + opt.lambda_normal_mvs_depth * loss_normal_mvs_depth
-
-    if opt.lambda_offset_color_sparsity > 0:
-        image_mask = camera.image_mask.cuda()
-        loss_offset_color_sparsity = sparsity_loss(rendered_offset_color_norm, image_mask)
-        tb_dict["loss_offset_color_sparsity"] = loss_offset_color_sparsity.item()
-        loss = loss + opt.lambda_offset_color_sparsity * loss_offset_color_sparsity
     
     if opt.lambda_diffuse_factor_smooth > 0:
         image_mask = camera.image_mask.cuda()
@@ -296,17 +352,17 @@ def calculate_loss(camera, pc, results, opt):
         tb_dict["lambda_diffuse_factor_smooth"] = loss_diffuse_factor_smooth.item()
         loss = loss + opt.lambda_diffuse_factor_smooth * loss_diffuse_factor_smooth
         
-    if opt.lambda_ambient_factor_smooth > 0:
+    if opt.lambda_specular_factor_smooth > 0:
         image_mask = camera.image_mask.cuda()
         loss_specular_smooth = bilateral_smooth_loss(rendered_specular_intensity, gt_image, image_mask)
-        tb_dict["lambda_ambient_factor_smooth"] = loss_diffuse_factor_smooth.item()
-        loss = loss + opt.lambda_ambient_factor_smooth * loss_specular_smooth
+        tb_dict["lambda_specular_factor_smooth"] = loss_specular_smooth.item()
+        loss = loss + opt.lambda_specular_factor_smooth * loss_specular_smooth
     
     #* ambient smooth
     if opt.lambda_ambient_factor_smooth > 0:
         image_mask = camera.image_mask.cuda()
         loss_ambient_intensity_smooth = bilateral_smooth_loss(rendered_ambient_intensity, gt_image, image_mask)
-        tb_dict["rendered_ambient_intensity"] = loss_ambient_intensity_smooth.item()
+        tb_dict["lambda_ambient_factor_smooth"] = loss_ambient_intensity_smooth.item()
         loss = loss + opt.lambda_ambient_factor_smooth * loss_ambient_intensity_smooth
     
     #*normal smooth
@@ -322,7 +378,7 @@ def calculate_loss(camera, pc, results, opt):
     return loss, tb_dict
 
 
-def render_neilf(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
+def render_neilf_scalar(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
                  scaling_modifier=1.0, override_color=None, opt: OptimizationParams = False,
                  is_training=False, dict_params=None, light_pos=None):
     """
@@ -340,20 +396,10 @@ def render_neilf(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor
     return results
 
 
-def sample_incident_rays(normals, is_training=False, sample_num=24):
-    if is_training:
-        incident_dirs, incident_areas = fibonacci_sphere_sampling(
-            normals, sample_num, random_rotate=True)
-    else:
-        incident_dirs, incident_areas = fibonacci_sphere_sampling(
-            normals, sample_num, random_rotate=False)
-    return incident_dirs, incident_areas  # [N, S, 3], [N, S, 1]
-
-def rendering_equation_BlinnPhong_python(palette_color_transforms, opacity_transforms, opacity, offset_color, diffuse_factor, shininess, ambient_factor, specular_factor, normals, viewdirs,
+def rendering_equation_BlinnPhong_python(opacity_transforms, opacity, color, diffuse_factor, shininess, ambient_factor, specular_factor, normals, viewdirs,
                                          incidents_dirs, num_GSs_TFs):
-    guassian_nums = offset_color.shape[0]
     # ic(palette_color.shape)
-    offset_color = offset_color.unsqueeze(-2).contiguous()
+    color = color.unsqueeze(-2).contiguous()
     diffuse_factor = diffuse_factor.unsqueeze(-2).contiguous() # ambient white light intensity
     shininess = shininess.unsqueeze(-2).contiguous() # specular white light intensity
     ambient_factor = ambient_factor.unsqueeze(-2).contiguous() # ambient white light intensity
@@ -361,54 +407,36 @@ def rendering_equation_BlinnPhong_python(palette_color_transforms, opacity_trans
     normals = normals.unsqueeze(-2).contiguous()
     viewdirs = viewdirs.unsqueeze(-2).contiguous()
     incident_dirs = incidents_dirs.unsqueeze(-2).contiguous()
-    diffuse_color = torch.zeros_like(offset_color)
-    
-    offset_color_norm = (offset_color**2).sum(dim=-1).sum(dim=-1, keepdim=True)
-    
-    
-    #* inverse rendering
-
-    palette_colors = []
-    opacity_factors = []
-    for i in range(len(palette_color_transforms)):
-        palette_colors.append(palette_color_transforms[i].palette_color.clamp(0,1))
-        if opacity_transforms is not None:
-            opacity_factors.append(opacity_transforms[i].opacity_factor)
+    diffuse_color = color.clone()
     
     if len(num_GSs_TFs) > 1: # for multi GS rendering
         start_GS = 0
         for i in range(len(num_GSs_TFs)):
             end_GS = num_GSs_TFs[i] + start_GS
-            diffuse_color[start_GS:end_GS,:,:] = offset_color[start_GS:end_GS,:,:] + palette_color_transforms[i].palette_color.clamp(0,1).detach()
             if opacity_transforms is not None:
-                opacity[start_GS:end_GS,:] = opacity[start_GS:end_GS,:] * opacity_factors[i]
+                opacity[start_GS:end_GS,:] = opacity[start_GS:end_GS,:] * opacity_transforms[i].opacity_factor
             start_GS = end_GS
-    else: # for individual GS optimization
-        diffuse_color = offset_color+palette_color_transforms[0].palette_color.clamp(0,1).detach()
-    
-    #* light_intesity = kd, offset_color = offset_color
+
+    #* light_intesity = kd
     #* diffuse color 
-    cos_l = (normals*incident_dirs).sum(dim=-1, keepdim=True)
+    cos_l = (normals * incident_dirs).sum(dim=-1, keepdim=True)
     
-    diffuse_intensity = diffuse_factor*torch.abs(cos_l)
-    diffuse_color = (ambient_factor+diffuse_intensity).repeat(1, 1, 3)*diffuse_color
+    diffuse_intensity = diffuse_factor * torch.abs(cos_l)
+    diffuse_color = diffuse_color * (ambient_factor + diffuse_intensity).repeat(1, 1, 3)
     
     #* specular color
     h = F.normalize(incident_dirs + viewdirs, dim=-1) # bisector h
-    cos_h = (normals*h).sum(dim=-1, keepdim=True)
+    cos_h = (normals * h).sum(dim=-1, keepdim=True)
     # specular_intensity = specular_factor*diffuse_factor*torch.where(cos_l != 0, (torch.abs(cos_h)).pow(shininess), 0.0)
-    specular_intensity = specular_factor*torch.where(cos_l != 0, (torch.abs(cos_h)).pow(shininess), 0.0)
-
+    specular_intensity = specular_factor * torch.where(cos_l != 0, (torch.abs(cos_h)).pow(shininess), 0.0)
     specular_color = specular_intensity.repeat(1, 1, 3)
-
     
     pbr = diffuse_color.squeeze() + specular_color.squeeze() #* seems better
     pbr = torch.clamp(pbr, 0., 1.)
 
     extra_results = {
-    "diffuse_render": diffuse_color,
-    "specular_render": specular_color,
-    "offset_color_norm": offset_color_norm,
+        "diffuse_render": diffuse_color,
+        "specular_render": specular_color,
     }
 
     return pbr, extra_results, opacity
