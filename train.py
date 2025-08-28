@@ -11,7 +11,7 @@ from random import randint
 from utils.loss_utils import ssim
 from gaussian_renderer import render_fn_dict
 import sys
-from scene import Scene, GaussianModel
+from scene import Scene, GaussianModel, ScalarGaussianModel
 from utils.general_utils import safe_state
 from tqdm import tqdm
 from utils.image_utils import psnr, visualize_depth
@@ -33,7 +33,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     """
     Setup Gaussians
     """
-    gaussians = GaussianModel(dataset.sh_degree, render_type=args.type) # render type check whether use pbr(neilf) or not
+    if is_scalar:
+        gaussians = ScalarGaussianModel(dataset.sh_degree, render_type=args.type)
+    else:
+        gaussians = GaussianModel(dataset.sh_degree, render_type=args.type) # render type check whether use pbr(neilf) or not
     scene = Scene(dataset, gaussians) # by default, randomly create 100_000 points (defined in dataset_readers:readNerfSyntheticInfo:num_pts) from the scene
     if args.checkpoint:
         print("Create Gaussians from checkpoint {}".format(args.checkpoint))
@@ -64,7 +67,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     
 
     """ Prepare render function and bg"""
-    render_fn = render_fn_dict[args.type]
+    render_fn = render_fn_dict[f"{'scalar_' if is_scalar else ''}{args.type}"]
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -397,7 +400,8 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument('--gui', action='store_false', default=True, help="use gui")
-    parser.add_argument('-t', '--type', choices=['render', 'normal', 'phong', 'scalar'], default='render')
+    parser.add_argument('-t', '--type', choices=['render', 'normal', 'phong'], default='render')
+    parser.add_argument('--is_scalar', action='store_true', default=False)
     parser.add_argument("--test_interval", type=int, default=2500)
     parser.add_argument("--save_interval", type=int, default=5000)
     parser.add_argument("--quiet", action="store_true")
@@ -416,7 +420,7 @@ if __name__ == "__main__":
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
     is_phong = args.type in ['phong']
-    is_scalar = args.type in ['scalar']
+    is_scalar = args.is_scalar
     training(lp.extract(args), op.extract(args), pp.extract(args), is_phong=is_phong, is_scalar=is_scalar)
 
     # All done

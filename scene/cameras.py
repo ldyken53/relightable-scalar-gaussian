@@ -75,15 +75,17 @@ class Camera(nn.Module):
             opacs = []
             indices = np.linspace(0, 1, 100)
             step_size = 1.0 / 3
+            eps = 1e-4
             for step in range(3):
-                center = step * step_size + step_size / 2
+                # make slightly off center so never have neighboring points with same value
+                center = step * step_size + step_size / 2 + eps
                 arr = np.zeros(100, dtype=np.float32)
                 
                 for i, x in enumerate(indices):
                     dist = abs(x - center)
                     arr[i] = max(0, 1 - (dist * 2 * 1 * (3 / 2)))
                 opacs.append(arr)
-            self.opac_map = torch.tensor(opacs[1].reshape(-1, 1), dtype=torch.float32).to("cuda")
+            self.opac_map = torch.tensor(opacs[2].reshape(-1, 1), dtype=torch.float32).to("cuda")
 
         self.zfar = 100.0
         self.znear = 0.01
