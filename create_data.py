@@ -64,9 +64,29 @@ def arrayFromVTKMatrix(vmatrix):
     return narray
 
 
-@njit
-def is_image_too_dark_numba(image, threshold=3):
-    return np.max(image) < threshold
+@njit(cache=True)
+def is_image_blank_alpha(image: np.ndarray,
+                         alpha_threshold: int = 1,
+                         min_fraction: float = 0.01) -> bool:
+    """
+    Return True when fewer than `min_fraction` of the pixels have alpha >
+    `alpha_threshold`.  Faster and simpler than checking RGB.
+
+    Works only if `image` has 4 channels; if not, falls back to an RGB-based test.
+    """
+    h, w, c = image.shape
+    total = h * w
+
+    if c < 4:                       # RGB screenshot – no alpha to test
+        return np.max(image) < alpha_threshold
+
+    lit = 0
+    for y in range(h):
+        for x in range(w):
+            if image[y, x, 3] > alpha_threshold:  # α channel
+                lit += 1
+
+    return lit < min_fraction * total
 
 
 def buildRawDataset(
@@ -83,7 +103,7 @@ def buildRawDataset(
     if not triangular:
         indices = np.arange(num_points)
         bins = np.linspace(0, num_points, num_maps+1).astype(int)
-        for arr in [((indices >= start - 1) & (indices < end + 1)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]:
+        for arr in [((indices >= start) & (indices < end)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]:
             arr = arr * 0.5
             opacs.append(arr)
     else: 
@@ -103,50 +123,74 @@ def buildRawDataset(
     # Window setup
     width = 800
     height = 800
-    pl = pv.Plotter(off_screen=True)
+    pl = pv.Plotter(off_screen=True, lighting="none")
+    headlight = pv.Light(light_type='headlight')
+    headlight.intensity = 1.0
+    pl.add_light(headlight)
     pl.window_size = [width, height]
 
-    # Parse the filename
-    filename = os.path.basename(raw_file).rsplit(".", 1)[0]
-    parts = filename.split("_")
-    dimensions = tuple(map(int, parts[-2].split("x")))
-    base_name = parts[0]
+    if raw_file.endswith(".vti"):
+        dir = os.path.join(out_path, os.path.basename(raw_file).rsplit(".", 1)[0])
+        if os.path.exists(dir):
+            shutil.rmtree(dir)
+        os.makedirs(dir)
+    
+        mesh = pv.read(raw_file)
+        values = mesh.get_array("value").reshape(-1, 1)
+        values_min = values.min()
+        values_max = values.max()
+        values = (values - values_min) / (values_max - values_min)
+        mesh.get_array("value")[:] = values.ravel()
 
-    # Directory setup
-    dir = os.path.join(out_path, base_name)
-    if os.path.exists(dir):
-        shutil.rmtree(dir)
-    os.makedirs(dir)
+        # Scale mesh to the unit cube
+        xmin, xmax, ymin, ymax, zmin, zmax = mesh.bounds
+        global_min = min(xmin, ymin, zmin)
+        global_max = max(xmax, ymax, zmax)
+        mesh.translate(np.array([-global_min, -global_min, -global_min]), inplace=True)
+        mesh.scale(1.0/(global_max - global_min), inplace=True)
+        # mesh.translate(np.array([0.01,0.01,0.01]), inplace=True)
+    else:
+        # Parse the filename
+        filename = os.path.basename(raw_file).rsplit(".", 1)[0]
+        parts = filename.split("_")
+        dimensions = tuple(map(int, parts[-2].split("x")))
+        base_name = parts[0]
 
-    dtype_map = {
-        "uint8": np.uint8,
-        "int8": np.int8,
-        "uint16": np.uint16,
-        "int16": np.int16,
-        "uint32": np.uint32,
-        "int32": np.int32,
-        "float32": np.float32,
-        "float64": np.float64,
-    }
-    data_type = dtype_map[parts[-1]]
+        # Directory setup
+        dir = os.path.join(out_path, base_name)
+        if os.path.exists(dir):
+            shutil.rmtree(dir)
+        os.makedirs(dir)
 
-    # Load the raw data
-    values = np.fromfile(raw_file, dtype=data_type)
+        dtype_map = {
+            "uint8": np.uint8,
+            "int8": np.int8,
+            "uint16": np.uint16,
+            "int16": np.int16,
+            "uint32": np.uint32,
+            "int32": np.int32,
+            "float32": np.float32,
+            "float64": np.float64,
+        }
+        data_type = dtype_map[parts[-1]]
 
-    # Ensure the size matches the dimensions
-    if values.size != dimensions[0] * dimensions[1] * dimensions[2]:
-        raise ValueError("Data size does not match the specified dimensions.")
+        # Load the raw data
+        values = np.fromfile(raw_file, dtype=data_type)
 
-    mesh = pv.ImageData(dimensions=dimensions)
-    mesh.point_data["value"] = values
+        # Ensure the size matches the dimensions
+        if values.size != dimensions[0] * dimensions[1] * dimensions[2]:
+            raise ValueError("Data size does not match the specified dimensions.")
 
-    # Point scaling
-    points_min = np.array(mesh.origin)
-    points_max = points_min + (np.array(mesh.dimensions) - 1) * np.array(mesh.spacing)
-    extents = points_max - points_min
-    max_extent = np.max(extents)
-    scale_factor = 1.0 / max_extent
-    mesh.spacing = tuple(np.array(mesh.spacing) * scale_factor)
+        mesh = pv.ImageData(dimensions=dimensions)
+        mesh.point_data["value"] = values
+
+        # Point scaling
+        points_min = np.array(mesh.origin)
+        points_max = points_min + (np.array(mesh.dimensions) - 1) * np.array(mesh.spacing)
+        extents = points_max - points_min
+        max_extent = np.max(extents)
+        scale_factor = 1.0 / max_extent
+        mesh.spacing = tuple(np.array(mesh.spacing) * scale_factor)
 
     # Get the focal point so that we can translate the mesh to the origin
     offset = list(pl.camera.focal_point)
@@ -163,12 +207,11 @@ def buildRawDataset(
     print(mesh.bounds)
 
     # Controls the camera orbit and capture frequency
-    azimuth_steps = 36
+    azimuth_steps = 32
     elevation_steps = 10
     azimuth_range = np.linspace(0, 360, azimuth_steps, endpoint=False)
     # elevation is intentionally limited to avoid a render bug(s) that occurs when elevation is outside of [-35, 35]
     elevation_range = np.linspace(-35, 35, elevation_steps, endpoint=True)
-
     for i, opac in enumerate(opacs):
         train_cams = []
         test_cams = []
@@ -189,12 +232,9 @@ def buildRawDataset(
             scalars="value",
             cmap=cmap,
             opacity=opac * 255,
-            # shade=True,
+            shade=True,
             render=False,
         )
-        headlight = pv.Light(light_type='headlight')
-        headlight.intensity = 1.0
-        pl.add_light(headlight)
         pl.view_xy(render=False)
         print(
             f"Time taken to update the volume: {time.time() - start_time:.2f} seconds"
@@ -213,10 +253,9 @@ def buildRawDataset(
 
                 img = pl.screenshot(None, transparent_background=True, return_img=True)
 
-                if is_image_too_dark_numba(img):
-                    print(f"SKIP HAPPENED, FIX SOMETHING")
-                    skip_counter += 1
-                    continue
+                # if is_image_blank_alpha(img):
+                #     print(f"SKIP HAPPENED, FIX SOMETHING")
+                #     continue
                 
                 # Save the render as a new image
                 image_name = (
@@ -288,8 +327,8 @@ if __name__ == "__main__":
         help="Folder to output to."
     )
     parser.add_argument(
-        "raw_file",
-        help="Raw volume filename (including extension)."
+        "file",
+        help="Volume filename (including extension)."
     )
     parser.add_argument(
         "num_maps",
@@ -301,4 +340,4 @@ if __name__ == "__main__":
         action="store_true"
     )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.raw_file, args.num_maps, (not args.rectangular))
+    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular))
