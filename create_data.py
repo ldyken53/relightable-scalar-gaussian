@@ -93,9 +93,10 @@ def buildRawDataset(
     out_path,
     raw_file,
     num_maps,
-    triangular
+    triangular,
+    shade
 ):
-    print(triangular)
+    print(shade)
     start_time = time.time()
     num_points = 100
     slope = 1
@@ -131,9 +132,7 @@ def buildRawDataset(
 
     if raw_file.endswith(".vti"):
         dir = os.path.join(out_path, os.path.basename(raw_file).rsplit(".", 1)[0])
-        if os.path.exists(dir):
-            shutil.rmtree(dir)
-        os.makedirs(dir)
+        os.makedirs(dir, exist_ok=True)
     
         mesh = pv.read(raw_file)
         values = mesh.get_array("value").reshape(-1, 1)
@@ -158,9 +157,7 @@ def buildRawDataset(
 
         # Directory setup
         dir = os.path.join(out_path, base_name)
-        if os.path.exists(dir):
-            shutil.rmtree(dir)
-        os.makedirs(dir)
+        os.makedirs(dir, exist_ok=True)
 
         dtype_map = {
             "uint8": np.uint8,
@@ -215,7 +212,9 @@ def buildRawDataset(
     for i, opac in enumerate(opacs):
         train_cams = []
         test_cams = []
-        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}TF{(i+1):02d}")
+        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}{'NS' if not shade else ''}TF{(i+1):02d}")
+        if os.path.exists(opac_dir):
+            shutil.rmtree(opac_dir)
         os.makedirs(opac_dir)
         train_dir = os.path.join(opac_dir, f"train")
         os.makedirs(train_dir)
@@ -232,7 +231,7 @@ def buildRawDataset(
             scalars="value",
             cmap=cmap,
             opacity=opac * 255,
-            shade=True,
+            shade=shade,
             render=False,
         )
         pl.view_xy(render=False)
@@ -339,5 +338,9 @@ if __name__ == "__main__":
         "--rectangular",
         action="store_true"
     )
+    parser.add_argument(
+        "--noshade",
+        action="store_true"
+    )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular))
+    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade))
