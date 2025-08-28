@@ -14,7 +14,7 @@ from .diff_rasterization import GaussianRasterizationSettings, GaussianRasterize
     RenderEquation_complex
 
 
-def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
+def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
                 scaling_modifier=1.0, override_color=None, is_training=False, dict_params=None, light_pos=None):
     gamma_transform = dict_params.get("gamma")
     palette_color_transforms = dict_params.get("palette_colors")
@@ -26,27 +26,27 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
         screenspace_points.retain_grad()
     except:
         pass
-    # ic(viewpoint_camera)
+    # ic(camera)
     # exit()
     
     # Set up rasterization configuration
-    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-    intrinsic = viewpoint_camera.intrinsics
+    tanfovx = math.tan(camera.FoVx * 0.5)
+    tanfovy = math.tan(camera.FoVy * 0.5)
+    intrinsic = camera.intrinsics
 
     raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
+        image_height=int(camera.image_height),
+        image_width=int(camera.image_width),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
         cx=float(intrinsic[0, 2]),
         cy=float(intrinsic[1, 2]),
         bg=bg_color,
         scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
+        viewmatrix=camera.world_view_transform,
+        projmatrix=camera.full_proj_transform,
         sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
+        campos=camera.camera_center,
         prefiltered=False,
         backward_geometry=True,
         computer_pseudo_normal=True,
@@ -76,7 +76,7 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
     colors_precomp = None
     if override_color is None:
         if pipe.compute_SHs_python:
-            dir_pp_normalized = F.normalize(viewpoint_camera.camera_center.repeat(means3D.shape[0], 1) - means3D,
+            dir_pp_normalized = F.normalize(camera.camera_center.repeat(means3D.shape[0], 1) - means3D,
                                             dim=-1)
             shs_view = pc.get_shs.transpose(1, 2).view(-1, 3, (pc.max_sh_degree + 1) ** 2)
             sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
@@ -96,10 +96,10 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
     normal = pc.get_normal
     num_GSs_TF = pc.get_num_GSs_TF
 
-    viewdirs = F.normalize(viewpoint_camera.camera_center - means3D, dim=-1)
+    viewdirs = F.normalize(camera.camera_center - means3D, dim=-1)
 
     # exit()
-    # light_pos = viewpoint_camera.light_dir
+    # light_pos = camera.light_dir
     if light_pos is None:
         incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
     else:
@@ -194,13 +194,13 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
                }
 
     results.update(feature_dict)
-    results["hdr"] = viewpoint_camera.hdr
+    results["hdr"] = camera.hdr
     results["val_gamma"] = val_gamma
 
     return results
 
 
-def calculate_loss(viewpoint_camera, pc, results, opt):
+def calculate_loss(camera, pc, results, opt):
     tb_dict = {
         "num_points": pc.get_xyz.shape[0],
     }
@@ -214,7 +214,7 @@ def calculate_loss(viewpoint_camera, pc, results, opt):
     rendered_specular_intensity = results["specular_factor"]
     cur_ambient_factors = results["ambient_values"]
     rendered_offset_color_norm = results["offset_color_norm"]
-    gt_image = viewpoint_camera.original_image.cuda()
+    gt_image = camera.original_image.cuda()
     loss = 0.0
     #* OK
     if opt.lambda_render > 0:
@@ -237,8 +237,8 @@ def calculate_loss(viewpoint_camera, pc, results, opt):
 
     #* necessary? I do not think we have depth gt
     if opt.lambda_depth > 0:
-        gt_depth = viewpoint_camera.depth.cuda()
-        image_mask = viewpoint_camera.image_mask.cuda().bool()
+        gt_depth = camera.depth.cuda()
+        image_mask = camera.image_mask.cuda().bool()
         depth_mask = gt_depth > 0
         sur_mask = torch.logical_xor(image_mask, depth_mask)
 
@@ -248,7 +248,7 @@ def calculate_loss(viewpoint_camera, pc, results, opt):
 
     if opt.lambda_opacity > 0:
         o = rendered_opacity.clamp(1e-6, 1 - 1e-6)
-        image_mask = viewpoint_camera.image_mask.cuda()
+        image_mask = camera.image_mask.cuda()
         Ll1_opacity = F.l1_loss(o, image_mask).item()
         ssim_val_opacity = ssim(o, image_mask)
         # loss_mask_entropy = -(image_mask * torch.log(o) + (1 - image_mask) * torch.log(1 - o)).mean()
@@ -258,26 +258,26 @@ def calculate_loss(viewpoint_camera, pc, results, opt):
         
     if opt.lambda_normal_render_depth > 0:
         normal_pseudo = results['pseudo_normal']
-        image_mask = viewpoint_camera.image_mask.cuda()
+        image_mask = camera.image_mask.cuda()
         loss_normal_render_depth = F.mse_loss(
             rendered_normal * image_mask, normal_pseudo.detach() * image_mask)
         tb_dict["loss_normal_render_depth"] = loss_normal_render_depth.item()
         loss = loss + opt.lambda_normal_render_depth * loss_normal_render_depth
 
     if opt.lambda_normal_mvs_depth > 0:
-        gt_depth = viewpoint_camera.depth.cuda()
+        gt_depth = camera.depth.cuda()
         depth_mask = (gt_depth > 0).float()
-        mvs_normal = viewpoint_camera.normal.cuda()
+        mvs_normal = camera.normal.cuda()
 
         # depth to normal, if there is a gt depth but not a MVS normal map
         if torch.allclose(mvs_normal, torch.zeros_like(mvs_normal)):
             from kornia.geometry import depth_to_normals
-            normal_pseudo_cam = -depth_to_normals(gt_depth[None], viewpoint_camera.intrinsics[None])[0]
-            c2w = viewpoint_camera.world_view_transform.T.inverse()
+            normal_pseudo_cam = -depth_to_normals(gt_depth[None], camera.intrinsics[None])[0]
+            c2w = camera.world_view_transform.T.inverse()
             R = c2w[:3, :3]
             _, H, W = normal_pseudo_cam.shape
             mvs_normal = (R @ normal_pseudo_cam.reshape(3, -1)).reshape(3, H, W)
-            viewpoint_camera.normal = mvs_normal.cpu()
+            camera.normal = mvs_normal.cpu()
 
         loss_normal_mvs_depth = F.mse_loss(
             rendered_normal * depth_mask, mvs_normal * depth_mask)
@@ -285,33 +285,33 @@ def calculate_loss(viewpoint_camera, pc, results, opt):
         loss = loss + opt.lambda_normal_mvs_depth * loss_normal_mvs_depth
 
     if opt.lambda_offset_color_sparsity > 0:
-        image_mask = viewpoint_camera.image_mask.cuda()
+        image_mask = camera.image_mask.cuda()
         loss_offset_color_sparsity = sparsity_loss(rendered_offset_color_norm, image_mask)
         tb_dict["loss_offset_color_sparsity"] = loss_offset_color_sparsity.item()
         loss = loss + opt.lambda_offset_color_sparsity * loss_offset_color_sparsity
     
     if opt.lambda_diffuse_factor_smooth > 0:
-        image_mask = viewpoint_camera.image_mask.cuda()
+        image_mask = camera.image_mask.cuda()
         loss_diffuse_factor_smooth = bilateral_smooth_loss(rendered_diffuse_factor, gt_image, image_mask)
         tb_dict["lambda_diffuse_factor_smooth"] = loss_diffuse_factor_smooth.item()
         loss = loss + opt.lambda_diffuse_factor_smooth * loss_diffuse_factor_smooth
         
     if opt.lambda_ambient_factor_smooth > 0:
-        image_mask = viewpoint_camera.image_mask.cuda()
+        image_mask = camera.image_mask.cuda()
         loss_specular_smooth = bilateral_smooth_loss(rendered_specular_intensity, gt_image, image_mask)
         tb_dict["lambda_ambient_factor_smooth"] = loss_diffuse_factor_smooth.item()
         loss = loss + opt.lambda_ambient_factor_smooth * loss_specular_smooth
     
     #* ambient smooth
     if opt.lambda_ambient_factor_smooth > 0:
-        image_mask = viewpoint_camera.image_mask.cuda()
+        image_mask = camera.image_mask.cuda()
         loss_ambient_intensity_smooth = bilateral_smooth_loss(rendered_ambient_intensity, gt_image, image_mask)
         tb_dict["rendered_ambient_intensity"] = loss_ambient_intensity_smooth.item()
         loss = loss + opt.lambda_ambient_factor_smooth * loss_ambient_intensity_smooth
     
     #*normal smooth
     if opt.lambda_normal_smooth > 0:
-        image_mask = viewpoint_camera.image_mask.cuda()
+        image_mask = camera.image_mask.cuda()
         loss_normal_smooth = bilateral_smooth_loss(rendered_normal, gt_image, image_mask)
         tb_dict["loss_normal_smooth"] = loss_normal_smooth.item()
         loss = loss + opt.lambda_normal_smooth * loss_normal_smooth
@@ -322,18 +322,18 @@ def calculate_loss(viewpoint_camera, pc, results, opt):
     return loss, tb_dict
 
 
-def render_neilf(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
+def render_neilf(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
                  scaling_modifier=1.0, override_color=None, opt: OptimizationParams = False,
                  is_training=False, dict_params=None, light_pos=None):
     """
     Render the scene.
     Background tensor (bg_color) must be on GPU!
     """
-    results = render_view(viewpoint_camera, pc, pipe, bg_color,
+    results = render_view(camera, pc, pipe, bg_color,
                           scaling_modifier, override_color, is_training, dict_params,light_pos=light_pos)
 
     if is_training:
-        loss, tb_dict = calculate_loss(viewpoint_camera, pc, results, opt)
+        loss, tb_dict = calculate_loss(camera, pc, results, opt)
         results["tb_dict"] = tb_dict
         results["loss"] = loss
 
