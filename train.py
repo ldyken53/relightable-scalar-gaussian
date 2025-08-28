@@ -34,7 +34,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     Setup Gaussians
     """
     if is_scalar:
-        gaussians = ScalarGaussianModel(dataset.sh_degree, render_type=args.type)
+        gaussians = ScalarGaussianModel(render_type=args.type)
     else:
         gaussians = GaussianModel(dataset.sh_degree, render_type=args.type) # render type check whether use pbr(neilf) or not
     scene = Scene(dataset, gaussians) # by default, randomly create 100_000 points (defined in dataset_readers:readNerfSyntheticInfo:num_pts) from the scene
@@ -85,7 +85,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
         #     windows.render()
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
+        if iteration % 1000 == 0 and not is_scalar:
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
@@ -309,13 +309,15 @@ def save_training_vis(viewpoint_cam, gaussians, background, render_fn, pipe, opt
 
             if is_phong:
                 visualization_list.extend([
-                    render_pkg["offset_color"],
                     render_pkg["shininess"].repeat(3, 1, 1),
                     render_pkg["ambient_factor"].repeat(3, 1, 1),
                     render_pkg["diffuse_term"],
                     render_pkg["specular_term"],
                     render_pkg["phong"],
                 ])
+
+            if is_phong and not is_scalar:
+                visualization_list.append(render_pkg["offset_color"])
 
             grid = torch.stack(visualization_list, dim=0)
             grid = make_grid(grid, nrow=4)
