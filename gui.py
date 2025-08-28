@@ -730,7 +730,7 @@ if __name__ == '__main__':
         c2w[:3, 1:3] *= -1
     
     windows = GUI(H, W, fovy,
-                  c2w=c2w, center=np.zeros(3),
+                  c2w=c2w, center=np.array([0.5,0.5,3.5]),
                   render_fn=render_fn, render_kwargs=render_kwargs, TFnums=TFs_nums,
                   mode=args.type, debug=args.gui_debug)
     
