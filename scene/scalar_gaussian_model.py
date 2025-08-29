@@ -519,7 +519,7 @@ class ScalarGaussianModel:
 
         elements = np.empty(gaussian_nums, dtype=dtype_full)
         #!Note: the order need to be aligned with the order of construct_list_of_attributes
-        attributes = np.concatenate((xyz, opacities, normal, scaling, rotation, diffuse_factor, shininess, ambient_factor, specular_factor, scalar, scalar2), axis=1)
+        attributes = np.concatenate((xyz, opacities, normal, scaling, rotation, scalar, scalar2, diffuse_factor, shininess, ambient_factor, specular_factor), axis=1)
         elements[:] = list(map(tuple, attributes))
         elements_list.append(PlyElement.describe(elements, f'gaussians'))
             
