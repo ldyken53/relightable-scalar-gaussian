@@ -95,9 +95,10 @@ def scalar2opac(s, lut):
 
 
 def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
-                scaling_modifier=1.0, override_color=None, is_training=False, dict_params=None, light_pos=None):
+                scaling_modifier=1.0, override_color=None, is_training=False, dict_params=None):
     gamma_transform = dict_params.get("gamma")
     opacity_transforms = dict_params.get("opacity_factors")
+    light_transform = dict_params.get("light_transform")
 
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
@@ -166,7 +167,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     viewdirs = F.normalize(camera.camera_center - means3D, dim=-1)
 
     # exit()
-    # light_pos = camera.light_dir
+    light_pos = light_transform.get_light_dir()
     if light_pos is None:
         incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
     else:
@@ -175,7 +176,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
      
     brdf_color, extra_results, opacity = rendering_equation_BlinnPhong_python(
-        opacity_transforms, opacity, scalar_color, diffuse_factor, shininess, ambient_factor, specular_factor, normal, viewdirs, incidents_dirs, num_GSs_TF)
+        opacity_transforms, light_transform, opacity, scalar_color, diffuse_factor, shininess, ambient_factor, specular_factor, normal, viewdirs, incidents_dirs, num_GSs_TF)
 
 
     if is_training:
@@ -183,7 +184,8 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     else:
         features = torch.cat([brdf_color, normal, scalar_color, diffuse_factor, shininess, ambient_factor, specular_factor,
                               extra_results['diffuse_render'].mean(dim=1),
-                              extra_results['specular_render'].mean(dim=1)], dim=-1)
+                              extra_results['specular_render'].mean(dim=1),
+                              extra_results['ambient_render'].mean(dim=1)], dim=-1)
         
     # ic(shs.shape) #* this one can not be empty
     # ic(colors_precomp.shape) #* this one is OK to be empty
@@ -220,8 +222,8 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
         rendered_phong, rendered_normal, rendered_scalar, \
             rendered_diffuse_factor, rendered_shininess, \
             rendered_amibent_factor, rendered_specular_factor, \
-            rendered_diffuse_term, rendered_specular_term \
-            = rendered_feature.split([3, 3, 3, 1, 1, 1, 1, 3, 3], dim=0)
+            rendered_diffuse_term, rendered_specular_term, rendered_ambient_term \
+            = rendered_feature.split([3, 3, 3, 1, 1, 1, 1, 3, 3, 3], dim=0)
 
         feature_dict.update({"diffuse_factor": rendered_diffuse_factor,
                              "shininess": rendered_shininess,
@@ -229,6 +231,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
                              "specular_factor": rendered_specular_factor,
                              "diffuse_term": rendered_diffuse_term,
                              "specular_term": rendered_specular_term,
+                             "ambient_term": rendered_ambient_term,
                              })
 
     phong = rendered_phong
@@ -386,7 +389,7 @@ def render_neilf_scalar(camera: Camera, pc: GaussianModel, pipe, bg_color: torch
     Background tensor (bg_color) must be on GPU!
     """
     results = render_view(camera, pc, pipe, bg_color,
-                          scaling_modifier, override_color, is_training, dict_params,light_pos=light_pos)
+                          scaling_modifier, override_color, is_training, dict_params)
 
     if is_training:
         loss, tb_dict = calculate_loss(camera, pc, results, opt)
@@ -396,14 +399,15 @@ def render_neilf_scalar(camera: Camera, pc: GaussianModel, pipe, bg_color: torch
     return results
 
 
-def rendering_equation_BlinnPhong_python(opacity_transforms, opacity, color, diffuse_factor, shininess, ambient_factor, specular_factor, normals, viewdirs,
+def rendering_equation_BlinnPhong_python(opacity_transforms, light_transform, opacity, color, diffuse_factor, shininess, ambient_factor, specular_factor, normals, viewdirs,
                                          incidents_dirs, num_GSs_TFs):
-    # ic(palette_color.shape)
+    spcular_multi, diffuse_factor_multi, ambient_multi, shininess_multi,\
+        specular_offset, diffuse_factor_offset, ambient_offset, shininess_offset= light_transform.get_light_transform()
     color = color.unsqueeze(-2).contiguous()
-    diffuse_factor = diffuse_factor.unsqueeze(-2).contiguous() # ambient white light intensity
-    shininess = shininess.unsqueeze(-2).contiguous() # specular white light intensity
-    ambient_factor = ambient_factor.unsqueeze(-2).contiguous() # ambient white light intensity
-    specular_factor = specular_factor.unsqueeze(-2).contiguous() # specular white light intensity
+    diffuse_factor = diffuse_factor.unsqueeze(-2).contiguous()*diffuse_factor_multi+diffuse_factor_offset # ambient white light intensity
+    shininess = shininess.unsqueeze(-2).contiguous()*shininess_multi+shininess_offset # specular white light intensity
+    ambient_factor = ambient_factor.unsqueeze(-2).contiguous()*ambient_multi+ambient_offset # ambient white light intensity
+    specular_factor = specular_factor.unsqueeze(-2).contiguous()*spcular_multi+specular_offset # specular white light intensity
     normals = normals.unsqueeze(-2).contiguous()
     viewdirs = viewdirs.unsqueeze(-2).contiguous()
     incident_dirs = incidents_dirs.unsqueeze(-2).contiguous()
@@ -423,7 +427,8 @@ def rendering_equation_BlinnPhong_python(opacity_transforms, opacity, color, dif
     
     diffuse_intensity = diffuse_factor * torch.abs(cos_l)
     diffuse_color = diffuse_color * (ambient_factor + diffuse_intensity).repeat(1, 1, 3)
-    
+    diffuse_term = diffuse_intensity.repeat(1, 1, 3)*diffuse_color
+    ambient_term = torch.clamp(ambient_factor.repeat(1, 1, 3)*diffuse_color,0.,1.)
     #* specular color
     h = F.normalize(incident_dirs + viewdirs, dim=-1) # bisector h
     cos_h = (normals * h).sum(dim=-1, keepdim=True)
@@ -435,8 +440,9 @@ def rendering_equation_BlinnPhong_python(opacity_transforms, opacity, color, dif
     pbr = torch.clamp(pbr, 0., 1.)
 
     extra_results = {
-        "diffuse_render": diffuse_color,
+        "diffuse_render": diffuse_term,
         "specular_render": specular_color,
+        "ambient_render": ambient_term,
     }
 
     return pbr, extra_results, opacity

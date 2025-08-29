@@ -15,7 +15,7 @@ from .diff_rasterization import GaussianRasterizationSettings, GaussianRasterize
 def safe_normalize(x, eps=1e-20):
     return x / torch.sqrt(torch.clamp(torch.sum(x * x, -1, keepdim=True), min=eps))
 
-def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
+def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
                 scaling_modifier=1.0, override_color=None, is_training=False, dict_params=None):
     palette_color_transforms = dict_params.get("palette_colors")
     opacity_transforms = dict_params.get("opacity_factors")
@@ -27,28 +27,28 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
         screenspace_points.retain_grad()
     except:
         pass
-    # ic(viewpoint_camera)
+    # ic(camera)
     # exit()
     
     # Set up rasterization configuration
-    tanfovx = math.tan(viewpoint_camera.FoVx * 0.5)
-    tanfovy = math.tan(viewpoint_camera.FoVy * 0.5)
-    intrinsic = viewpoint_camera.intrinsics
-    # ic(viewpoint_camera.image_height, viewpoint_camera.image_width)
+    tanfovx = math.tan(camera.FoVx * 0.5)
+    tanfovy = math.tan(camera.FoVy * 0.5)
+    intrinsic = camera.intrinsics
+    # ic(camera.image_height, camera.image_width)
     # exit()
     raster_settings = GaussianRasterizationSettings(
-        image_height=int(viewpoint_camera.image_height),
-        image_width=int(viewpoint_camera.image_width),
+        image_height=int(camera.image_height),
+        image_width=int(camera.image_width),
         tanfovx=tanfovx,
         tanfovy=tanfovy,
         cx=float(intrinsic[0, 2]),
         cy=float(intrinsic[1, 2]),
         bg=bg_color,
         scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
+        viewmatrix=camera.world_view_transform,
+        projmatrix=camera.full_proj_transform,
         sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
+        campos=camera.camera_center,
         prefiltered=False,
         backward_geometry=True,
         computer_pseudo_normal=True,
@@ -78,7 +78,7 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
     colors_precomp = None
     if override_color is None:
         if pipe.compute_SHs_python:
-            dir_pp_normalized = F.normalize(viewpoint_camera.camera_center.repeat(means3D.shape[0], 1) - means3D,
+            dir_pp_normalized = F.normalize(camera.camera_center.repeat(means3D.shape[0], 1) - means3D,
                                             dim=-1)
             shs_view = pc.get_shs.transpose(1, 2).view(-1, 3, (pc.max_sh_degree + 1) ** 2)
             sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
@@ -96,7 +96,7 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
     normal = pc.get_normal.detach()
     num_GSs_TF = pc.get_num_GSs_TF
     means3D = torch.nan_to_num(means3D) #note: there are a small number of nan in the means3D (69/1744811), remove this for training
-    viewdirs = F.normalize(viewpoint_camera.camera_center - means3D, dim=-1)
+    viewdirs = F.normalize(camera.camera_center - means3D, dim=-1)
 
     light_pos = light_transform.get_light_dir()
     if light_pos is None:
@@ -196,12 +196,12 @@ def render_view(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: tor
     return results
 
 
-def calculate_loss(viewpoint_camera, pc, results, opt):
+def calculate_loss(camera, pc, results, opt):
     tb_dict = {
         "num_points": pc.get_xyz.shape[0],
     }
     rendered_phong = results["phong"] #* pbr -> phong
-    gt_image = viewpoint_camera.original_image.cuda()
+    gt_image = camera.original_image.cuda()
     loss = 0.0
     #* OK
     # ic(rendered_phong.shape, gt_image.shape)
@@ -221,18 +221,18 @@ def calculate_loss(viewpoint_camera, pc, results, opt):
     return loss, tb_dict
 
 
-def render_neilf_inverse(viewpoint_camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
+def render_neilf_inverse(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
                  scaling_modifier=1.0, override_color=None, opt: OptimizationParams = False,
                  is_training=False, dict_params=None):
     """
     Render the scene.
     Background tensor (bg_color) must be on GPU!
     """
-    results = render_view(viewpoint_camera, pc, pipe, bg_color,
+    results = render_view(camera, pc, pipe, bg_color,
                           scaling_modifier, override_color, is_training, dict_params)
 
     if is_training:
-        loss, tb_dict = calculate_loss(viewpoint_camera, pc, results, opt)
+        loss, tb_dict = calculate_loss(camera, pc, results, opt)
         results["tb_dict"] = tb_dict
         results["loss"] = loss
 
@@ -280,7 +280,6 @@ def rendering_equation_BlinnPhong_python(palette_color_transforms, opacity_trans
     diffuse_intensity = diffuse_factor*torch.abs(cos_l)
     # ic(torch.isnan(offset_color).sum(), torch.isnan(ambient_factor).sum(), torch.isnan(diffuse_intensity).sum())
     diffuse_color = (ambient_factor+diffuse_intensity).repeat(1, 1, 3)*diffuse_color
-    
     diffuse_term = diffuse_intensity.repeat(1, 1, 3)*diffuse_color
     ambient_term = torch.clamp(ambient_factor.repeat(1, 1, 3)*diffuse_color,0.,1.)
     
