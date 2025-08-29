@@ -167,11 +167,11 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     viewdirs = F.normalize(camera.camera_center - means3D, dim=-1)
 
     # exit()
-    light_pos = light_transform.get_light_dir()
-    if light_pos is None:
-        incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
-    else:
+    if light_transform:
+        light_pos = light_transform.get_light_dir()
         incidents_dirs = F.normalize(light_pos, dim=-1).detach().contiguous() #* orbital light with directional lighting
+    else:
+        incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
     # ic(incidents.shape) # [N, 16, 3]
 
      
@@ -401,13 +401,19 @@ def render_neilf_scalar(camera: Camera, pc: GaussianModel, pipe, bg_color: torch
 
 def rendering_equation_BlinnPhong_python(opacity_transforms, light_transform, opacity, color, diffuse_factor, shininess, ambient_factor, specular_factor, normals, viewdirs,
                                          incidents_dirs, num_GSs_TFs):
-    spcular_multi, diffuse_factor_multi, ambient_multi, shininess_multi,\
-        specular_offset, diffuse_factor_offset, ambient_offset, shininess_offset= light_transform.get_light_transform()
+    if light_transform:
+        spcular_multi, diffuse_factor_multi, ambient_multi, shininess_multi,\
+            specular_offset, diffuse_factor_offset, ambient_offset, shininess_offset= light_transform.get_light_transform()
+        diffuse_factor = diffuse_factor.unsqueeze(-2).contiguous()*diffuse_factor_multi+diffuse_factor_offset # ambient white light intensity
+        shininess = shininess.unsqueeze(-2).contiguous()*shininess_multi+shininess_offset # specular white light intensity
+        ambient_factor = ambient_factor.unsqueeze(-2).contiguous()*ambient_multi+ambient_offset # ambient white light intensity
+        specular_factor = specular_factor.unsqueeze(-2).contiguous()*spcular_multi+specular_offset # specular white light intensity
+    else:
+        diffuse_factor = diffuse_factor.unsqueeze(-2).contiguous()
+        shininess = shininess.unsqueeze(-2).contiguous()
+        ambient_factor = ambient_factor.unsqueeze(-2).contiguous()
+        specular_factor = specular_factor.unsqueeze(-2).contiguous()
     color = color.unsqueeze(-2).contiguous()
-    diffuse_factor = diffuse_factor.unsqueeze(-2).contiguous()*diffuse_factor_multi+diffuse_factor_offset # ambient white light intensity
-    shininess = shininess.unsqueeze(-2).contiguous()*shininess_multi+shininess_offset # specular white light intensity
-    ambient_factor = ambient_factor.unsqueeze(-2).contiguous()*ambient_multi+ambient_offset # ambient white light intensity
-    specular_factor = specular_factor.unsqueeze(-2).contiguous()*spcular_multi+specular_offset # specular white light intensity
     normals = normals.unsqueeze(-2).contiguous()
     viewdirs = viewdirs.unsqueeze(-2).contiguous()
     incident_dirs = incidents_dirs.unsqueeze(-2).contiguous()
