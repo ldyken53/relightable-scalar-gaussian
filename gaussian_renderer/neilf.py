@@ -102,7 +102,10 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     # exit()
     if light_transform:
         light_pos = light_transform.get_light_dir()
-        incidents_dirs = F.normalize(light_pos, dim=-1).detach().contiguous() #* orbital light with directional lighting
+        if light_pos is not None:
+            incidents_dirs = F.normalize(light_pos, dim=-1).detach().contiguous() #* orbital light with directional lighting
+        else:
+            incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
     else:
         incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
     # ic(incidents.shape) # [N, 16, 3]
@@ -367,7 +370,6 @@ def rendering_equation_BlinnPhong_python(palette_color_transforms, opacity_trans
         ambient_factor = ambient_factor.unsqueeze(-2).contiguous()
         specular_factor = specular_factor.unsqueeze(-2).contiguous()
     offset_color = offset_color.unsqueeze(-2).contiguous()
-
     normals = normals.unsqueeze(-2).contiguous()
     viewdirs = viewdirs.unsqueeze(-2).contiguous()
     incident_dirs = incidents_dirs.unsqueeze(-2).contiguous()
