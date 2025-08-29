@@ -27,7 +27,287 @@ from scene.light_trans import LearningLightTransform
 from pyquaternion import Quaternion
 import cv2
 import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
 
+class OpacityMapEditor:
+    def __init__(self, width=400, height=200, max_opacity=3.0):
+        self.width = width
+        self.height = height
+        self.max_opacity = max_opacity
+        self.control_points = [(0.0, 1.0), (1.0, 1.0)]  # (x, opacity) pairs
+        self.opacity_curve = None
+        self.update_curve()
+        
+    def update_curve(self):
+        """Update the interpolated opacity curve from control points"""
+        if len(self.control_points) < 2:
+            return
+            
+        sorted_points = sorted(self.control_points, key=lambda p: p[0])
+        x_vals = [p[0] for p in sorted_points]
+        y_vals = [p[1] for p in sorted_points]
+        
+        self.interp_func = interp1d(x_vals, y_vals, kind='linear', 
+                                   bounds_error=False, fill_value='extrapolate')
+        
+        x_smooth = np.linspace(0, 1, 100)
+        y_smooth = np.clip(self.interp_func(x_smooth), 0, self.max_opacity)
+        self.opacity_curve = list(zip(x_smooth, y_smooth))
+    
+    def data_to_screen(self, data_x, data_y):
+        """Convert data coordinates to screen coordinates"""
+        screen_x = data_x * self.width
+        screen_y = self.height - (data_y / self.max_opacity * self.height)
+        return screen_x, screen_y
+    
+    def add_control_point(self, position, opacity):
+        """Add a new control point at normalized position (0-1) with given opacity"""
+        position = np.clip(position, 0, 1)
+        opacity = np.clip(opacity, 0, self.max_opacity)
+        
+        # Don't add points too close to existing ones
+        for existing_x, existing_y in self.control_points:
+            if abs(position - existing_x) < 0.05:  # 5% of range
+                return False
+                
+        self.control_points.append((position, opacity))
+        self.control_points.sort(key=lambda p: p[0])  # Keep sorted by position
+        self.update_curve()
+        return True
+    
+    def remove_control_point(self, index):
+        """Remove a control point (but keep at least 2 points)"""
+        if len(self.control_points) > 2 and 0 <= index < len(self.control_points):
+            del self.control_points[index]
+            self.update_curve()
+            return True
+        return False
+    
+    def update_control_point(self, index, position, opacity):
+        """Update an existing control point"""
+        if 0 <= index < len(self.control_points):
+            position = np.clip(position, 0, 1)
+            opacity = np.clip(opacity, 0, self.max_opacity)
+            self.control_points[index] = (position, opacity)
+            self.control_points.sort(key=lambda p: p[0])  # Keep sorted by position
+            self.update_curve()
+    
+    def get_opacity_at_position(self, position):
+        """Get opacity value at a specific position (0-1)"""
+        if self.interp_func is None:
+            return 1.0
+        return float(np.clip(self.interp_func(position), 0, self.max_opacity))
+    
+    def reset_to_default(self):
+        """Reset to default linear opacity map"""
+        self.control_points = [(0.0, 1.0), (1.0, 1.0)]
+        self.update_curve()
+
+def create_opacity_map_widget(tag, width=400, height=200, callback=None):
+    """Create an opacity map editor with individual sliders for each control point"""
+    
+    editor = OpacityMapEditor(width, height)
+    
+    def update_point_from_slider(sender, app_data):
+        """Update a control point from its slider values"""
+        # Extract point index from slider tag - need to get the last part after splitting
+        if "_pos_" in sender:
+            point_idx = int(sender.split("_pos_")[-1])  # Get last part
+            position = app_data / 100.0  # Convert from percentage
+            opacity = dpg.get_value(f"{tag}_opacity_{point_idx}")
+        elif "_opacity_" in sender:
+            point_idx = int(sender.split("_opacity_")[-1])  # Get last part
+            opacity = app_data
+            position = dpg.get_value(f"{tag}_pos_{point_idx}") / 100.0
+        else:
+            return
+            
+        if 0 <= point_idx < len(editor.control_points):
+            editor.update_control_point(point_idx, position, opacity)
+            update_opacity_display(tag, editor)
+            if callback:
+                callback(editor)
+    
+    def add_point_callback(sender, app_data):
+        """Add a new control point"""
+        position = dpg.get_value(f"{tag}_new_position") / 100.0
+        opacity = dpg.get_value(f"{tag}_new_opacity")
+        
+        success = editor.add_control_point(position, opacity)
+        if success:
+            update_opacity_display(tag, editor)
+            refresh_point_sliders(tag, editor, callback)
+            if callback:
+                callback(editor)
+            print(f"Added point at position {position:.2f}, opacity {opacity:.2f}")
+        else:
+            print("Could not add point - too close to existing point")
+    
+    def remove_point_callback(sender, app_data):
+        """Remove a control point"""
+        # Extract point index from button tag - get the last part after splitting
+        point_idx = int(sender.split("_remove_")[-1])
+        
+        success = editor.remove_control_point(point_idx)
+        if success:
+            update_opacity_display(tag, editor)
+            refresh_point_sliders(tag, editor, callback)
+            if callback:
+                callback(editor)
+            print(f"Removed point {point_idx}")
+    
+    def reset_callback(sender, app_data):
+        """Reset to default"""
+        editor.reset_to_default()
+        update_opacity_display(tag, editor)
+        refresh_point_sliders(tag, editor, callback)
+        if callback:
+            callback(editor)
+    
+    def refresh_point_sliders(tag, editor, callback):
+        """Refresh the slider controls for all points"""
+        # Clear existing point controls
+        if dpg.does_item_exist(f"{tag}_points_group"):
+            dpg.delete_item(f"{tag}_points_group")
+        
+        # Recreate point controls
+        with dpg.group(tag=f"{tag}_points_group", parent=f"{tag}_main_group"):
+            dpg.add_text("Control Points:")
+            
+            for i, (pos, opacity) in enumerate(editor.control_points):
+                with dpg.group(horizontal=True):
+                    dpg.add_text(f"Point {i}:")
+                    
+                    dpg.add_text("Pos:")
+                    dpg.add_slider_float(
+                        tag=f"{tag}_pos_{i}",
+                        min_value=0, max_value=100,
+                        default_value=pos * 100,
+                        callback=update_point_from_slider,
+                        width=80, format="%.0f%%"
+                    )
+                    
+                    dpg.add_text("Opacity:")
+                    dpg.add_slider_float(
+                        tag=f"{tag}_opacity_{i}",
+                        min_value=0, max_value=editor.max_opacity,
+                        default_value=opacity,
+                        callback=update_point_from_slider,
+                        width=80, format="%.2f"
+                    )
+                    
+                    # Only show remove button if we have more than 2 points
+                    if len(editor.control_points) > 2:
+                        dpg.add_button(
+                            label="Remove",
+                            tag=f"{tag}_remove_{i}",
+                            callback=remove_point_callback,
+                            width=60
+                        )
+    
+    # Create the main widget structure
+    with dpg.group(tag=tag):
+        dpg.add_text("Opacity Map Editor")
+        
+        # Visual display
+        drawlist_tag = f"{tag}_drawlist"
+        with dpg.drawlist(width=width, height=height, tag=drawlist_tag):
+            pass
+        
+        dpg.add_separator()
+        
+        # Main controls group
+        with dpg.group(tag=f"{tag}_main_group"):
+            # Add new point controls
+            with dpg.group():
+                dpg.add_text("Add New Point:")
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Position (%):")
+                    dpg.add_slider_float(
+                        tag=f"{tag}_new_position",
+                        min_value=0, max_value=100,
+                        default_value=50,
+                        width=100, format="%.0f%%"
+                    )
+                    
+                    dpg.add_text("Opacity:")
+                    dpg.add_slider_float(
+                        tag=f"{tag}_new_opacity",
+                        min_value=0, max_value=editor.max_opacity,
+                        default_value=1.5,
+                        width=100, format="%.2f"
+                    )
+                    
+                    dpg.add_button(label="Add Point", callback=add_point_callback)
+            
+            dpg.add_separator()
+        
+        dpg.add_button(label="Reset to Linear", callback=reset_callback)
+    
+    # Initialize display and controls
+    update_opacity_display(tag, editor)
+    refresh_point_sliders(tag, editor, callback)
+    
+    print(f"Created opacity widget with sliders: {tag}")
+    
+    return editor
+
+def update_opacity_display(tag, editor):
+    """Update the visual display of the opacity map"""
+    drawlist_tag = f"{tag}_drawlist"
+    dpg.delete_item(drawlist_tag, children_only=True)
+    
+    # Draw background
+    dpg.draw_rectangle((0, 0), (editor.width, editor.height), 
+                      color=(60, 60, 60, 255), fill=(40, 40, 40, 255), 
+                      parent=drawlist_tag)
+    
+    # Draw grid lines
+    grid_color = (100, 100, 100, 255)
+    # Vertical lines (every 20% = 0.2 * width)
+    for i in range(6):  # 0%, 20%, 40%, 60%, 80%, 100%
+        x = i * editor.width // 5
+        dpg.draw_line((x, 0), (x, editor.height), color=grid_color, 
+                     thickness=1, parent=drawlist_tag)
+        # Add percentage labels
+        dpg.draw_text((x + 2, 5), f"{i*20}%", 
+                     color=(200, 200, 200, 255), size=10, parent=drawlist_tag)
+    
+    # Horizontal lines (opacity levels)
+    for i in range(4):  # 0, 1, 2, 3 opacity
+        y = editor.height - (i * editor.height // 3)
+        dpg.draw_line((0, y), (editor.width, y), color=grid_color, 
+                     thickness=1, parent=drawlist_tag)
+        # Add opacity labels
+        dpg.draw_text((5, y - 15), f"{i:.1f}", 
+                     color=(200, 200, 200, 255), size=10, parent=drawlist_tag)
+    
+    # Draw opacity curve
+    if editor.opacity_curve and len(editor.opacity_curve) > 1:
+        curve_points = []
+        for data_x, data_y in editor.opacity_curve:
+            screen_x, screen_y = editor.data_to_screen(data_x, data_y)
+            curve_points.append([screen_x, screen_y])
+        
+        # Draw curve as connected lines
+        for i in range(len(curve_points) - 1):
+            dpg.draw_line(curve_points[i], curve_points[i + 1], 
+                         color=(120, 255, 120, 255), thickness=3, parent=drawlist_tag)
+    
+    # Draw control points
+    for i, (data_x, data_y) in enumerate(editor.control_points):
+        screen_x, screen_y = editor.data_to_screen(data_x, data_y)
+        
+        # Draw point with outline
+        dpg.draw_circle((screen_x, screen_y), 8, 
+                       color=(255, 255, 255, 255), thickness=2, parent=drawlist_tag)
+        dpg.draw_circle((screen_x, screen_y), 6, 
+                       color=(120, 150, 255, 255), fill=(120, 150, 255, 255), 
+                       parent=drawlist_tag)
+        
+        # Draw point number
+        dpg.draw_text((screen_x - 5, screen_y - 5), str(i), 
+                     color=(255, 255, 255, 255), size=12, parent=drawlist_tag)
 
 def screen_to_arcball(p:np.ndarray):
     dist = np.dot(p, p)
@@ -172,7 +452,7 @@ class GUI:
         If the image is hdr, set use_hdr2ldr = True for LDR visualization. [0, 1]
         If the image is hdr, set use_hdr2ldr = False, the range of the image is not [0,1].
         """
-        self.ctrlW = 475 #475
+        self.ctrlW = 500 #475
         self.widget_indent = 75
         self.widget_top = 150
         self.imgW = W
@@ -299,8 +579,8 @@ class GUI:
             self.menu_map = {"phong": "Blinn-Phong", "normal": "Normal", "diffuse_term": "Diffuse",
                              "specular_term": "Specular", "ambient_term": "Ambient"}
             self.inv_menu_map = {v: k for k, v in self.menu_map.items()}
-            self.menu = [self.menu_map[k] for k, v in render_pkg.items() if
-                         k not in ["pseudo_normal","render", "num_contrib", "surface_xyz", "diffuse_factor","depth", "shininess", "ambient_factor", "specular_factor", "offset_color", "opacity"] and isinstance(v, torch.Tensor) and np.array(v.shape).prod() % (self.imgH * self.imgW) == 0]
+            # self.menu = [self.menu_map[k] for k, v in render_pkg.items() if
+            #              k not in ["pseudo_normal","render", "num_contrib", "surface_xyz", "diffuse_factor","depth", "shininess", "ambient_factor", "specular_factor", "offset_color", "opacity"] and isinstance(v, torch.Tensor) and np.array(v.shape).prod() % (self.imgH * self.imgW) == 0]
             self.menu = ["Blinn-Phong", "Ambient", "Diffuse", "Specular", "Normal"]
             
         else:
@@ -312,13 +592,11 @@ class GUI:
             TFidx = int(sender.replace("_slider_TF", "")) - 1
             with torch.no_grad():
                 self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(app_data, dtype=torch.float32, device="cuda")
-            self.need_update = True
         
         def callback_TF_color_edit(sender, app_data):
             TFidx = int(sender.replace("_color_TF", "")) - 1
             with torch.no_grad():
                 self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color = torch.tensor(app_data[:3], dtype=torch.float32, device="cuda")
-            self.need_update = True
         
         slider_tag = "_slider_TF" + str(TFidx+1)
         color_tag = "_color_TF" + str(TFidx+1)
@@ -334,10 +612,10 @@ class GUI:
             dpg.add_slider_float(
                 tag=slider_tag,
                 label='',
-                default_value=0,
+                default_value=1.0,
                 min_value=0,
                 max_value=3.0,
-                height=300,
+                height=150,
                 # format="",
                 callback=callback_TF_slider,
                 vertical=True,
@@ -347,7 +625,37 @@ class GUI:
             dpg.add_color_edit(tag=color_tag, default_value=defualt_color, callback=callback_TF_color_edit,
                                no_inputs=True, no_label=True, no_alpha=True, indent=indent+slider_width//4)
 
+
+    def add_opacity_map_to_gui(self):
+        """Add opacity map editor to the GUI"""
+        
+        def opacity_map_callback(editor):
+            """Callback when opacity map changes"""
+            # Apply opacity values to each TF based on their interval midpoints
+            for TFidx in range(self.TFnums):
+                interval_start = TFidx / self.TFnums
+                interval_end = (TFidx + 1) / self.TFnums
+                midpoint = (interval_start + interval_end) / 2.0
+                
+                opacity_value = editor.get_opacity_at_position(midpoint)
+                
+                with torch.no_grad():
+                    self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(
+                        opacity_value, dtype=torch.float32, device="cuda"
+                    )
+                
+                # Update slider UI
+                dpg.set_value(f"_slider_TF{TFidx+1}", opacity_value)
             
+        
+        # Create the opacity map widget
+        self.opacity_editor = create_opacity_map_widget(
+            tag="_opacity_map", 
+            width=self.ctrlW - 20, 
+            height=100,
+            callback=opacity_map_callback
+        )
+
     def get_colormap_options(self):
         """Return list of 10 popular matplotlib colormap names"""
         return ["viridis", "plasma", "inferno", "magma", "cividis", 
@@ -397,14 +705,13 @@ class GUI:
 
         # the rendered image, as the primary window
         with dpg.window(tag="_primary_window", width=self.imgW, height=self.imgH):
-
             # add the texture
             dpg.add_image("_texture")
 
         dpg.set_primary_window("_primary_window", True)
 
         # control window
-        with dpg.window(label="Control", tag="_control_window", width=self.ctrlW, height=self.imgH, pos=(self.imgW, 0),
+        with dpg.window(label="Control", tag="_control_window", width=self.ctrlW, height=self.imgH+160, pos=(self.imgW, 0),
                         no_resize=True, no_move=True, no_title_bar=True, no_background=True):
 
             # button theme
@@ -425,7 +732,6 @@ class GUI:
                 # mode combo
                 def callback_change_mode(sender, app_data):
                     self.mode = self.inv_menu_map[app_data]
-                    self.need_update = True
                 with dpg.group(horizontal=True):
                     dpg.add_text("Mode")
                     dpg.add_combo(self.menu, indent=self.widget_top, label='', default_value="Blinn-Phong", callback=callback_change_mode)
@@ -433,28 +739,16 @@ class GUI:
                 # fov slider
                 def callback_set_fovy(sender, app_data):
                     self.cam.fovy = app_data
-                    self.need_update = True
                     
                 with dpg.group(horizontal=True):
                     dpg.add_text("Field of View")
                     dpg.add_slider_int(label="",indent=self.widget_top, min_value=1, max_value=120, format="%d deg",
                                    default_value=self.cam.fovy, callback=callback_set_fovy)
                     
-                def callback_change_colormap(sender, app_data):
-                    self.apply_colormap_to_palette(app_data)
-                    self.need_update = True
-
-                with dpg.group(horizontal=True):
-                    dpg.add_text("Colormap")
-                    dpg.add_combo(self.get_colormap_options(), indent=self.widget_top, 
-                                label='', default_value="rainbow", 
-                                callback=callback_change_colormap)
-                    
                 def callback_set_BG_color(sender, app_data):
                     bg_color = app_data[:3]
                     bg_color = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
                     self.render_kwargs["bg_color"] = bg_color
-                    self.need_update = True
                   
                 
                 with dpg.group(horizontal=True):
@@ -464,7 +758,6 @@ class GUI:
                 
                 def callback_reset_view(sender, app_data):
                     self.cam.reset_view()
-                    self.need_update = True
                 
                 def callback_save_image(sender, app_data):
                     rendered_img = self.render_buffer
@@ -480,22 +773,30 @@ class GUI:
                                     
             # color & opacity editing
             with dpg.collapsing_header(label="Color & Opacity Editing", default_open=True, leaf=True):
-                    with dpg.group(horizontal=True, horizontal_spacing=0):
-                        for i in range(self.TFnums):
-                            self.add_oneTFSlider(i)
-                    def callback_reset_color_opacity(sender, app_data):
-                        with torch.no_grad():
-                            for TFidx in range(self.TFnums):
-                                self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(1.0, dtype=torch.float32, device="cuda")
-                                self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color = self.original_palette_colors[TFidx]
-                                color_value = [int(x*255) for x in self.original_palette_colors[TFidx].detach().cpu().numpy()]
-                                dpg.set_value(f"_slider_TF{TFidx+1}", 1)
-                                dpg.set_value(f"_color_TF{TFidx+1}", tuple(color_value))
-                        self.need_update = True
-                    with dpg.group(horizontal=True):
-                        dpg.add_button(label="Reset Color & Opacity", tag="_button_reset_color_opacity",width=self.ctrlW-15, callback=callback_reset_color_opacity)
-                        dpg.bind_item_theme("_button_reset_color_opacity", self.theme_button)
-                        # dpg.bind_item_theme("_button_save_color_opacity", self.theme_button)
+                self.add_opacity_map_to_gui()
+                with dpg.group(horizontal=True, horizontal_spacing=0):
+                    for i in range(self.TFnums):
+                        self.add_oneTFSlider(i)
+                def callback_reset_color_opacity(sender, app_data):
+                    with torch.no_grad():
+                        for TFidx in range(self.TFnums):
+                            self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(1.0, dtype=torch.float32, device="cuda")
+                            self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color = self.original_palette_colors[TFidx]
+                            color_value = [int(x*255) for x in self.original_palette_colors[TFidx].detach().cpu().numpy()]
+                            dpg.set_value(f"_slider_TF{TFidx+1}", 1)
+                            dpg.set_value(f"_color_TF{TFidx+1}", tuple(color_value))
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Reset Color & Opacity", tag="_button_reset_color_opacity",width=self.ctrlW-15, callback=callback_reset_color_opacity)
+                    dpg.bind_item_theme("_button_reset_color_opacity", self.theme_button)
+                    # dpg.bind_item_theme("_button_save_color_opacity", self.theme_button)
+                def callback_change_colormap(sender, app_data):
+                    self.apply_colormap_to_palette(app_data)
+
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Colormap")
+                    dpg.add_combo(self.get_colormap_options(), indent=self.widget_top, 
+                                label='', default_value="rainbow", 
+                                callback=callback_change_colormap)
                             
             # light editing
             with dpg.collapsing_header(label="Light Editing", default_open=True, leaf=True):
@@ -507,7 +808,6 @@ class GUI:
                     else:
                         self.useHeadlight = app_data
                     self.render_kwargs["dict_params"]["light_transform"].useHeadLight = self.useHeadlight
-                    self.need_update = True
                 with dpg.group(horizontal=True):
                     dpg.add_text("Headlight")
                     dpg.add_checkbox(label="", tag="_checkbox_headlight", callback=callback_headlight, default_value=self.useHeadlight)
@@ -522,7 +822,6 @@ class GUI:
                         self.light_elevation = app_data
                     
                     self.render_kwargs["dict_params"]["light_transform"].set_light_theta_phi(self.light_angle, self.light_elevation)
-                    self.need_update = True
                 with dpg.group(horizontal=True):
                     dpg.add_text("Azimuthal")
                     dpg.add_slider_int(label="", tag="_slider_light_angle", indent=self.widget_indent,
@@ -542,7 +841,6 @@ class GUI:
                         self.render_kwargs["dict_params"]["light_transform"].specular_multi = torch.tensor(app_data, dtype=torch.float32, device="cuda")
                     elif sender == "_slider_shininess_multi":
                         self.render_kwargs["dict_params"]["light_transform"].shininess_multi = torch.tensor(app_data, dtype=torch.float32, device="cuda")
-                    self.need_update = True
                 
                 with dpg.group(horizontal=True):
                     dpg.add_text("Ambient")
@@ -590,8 +888,6 @@ class GUI:
                 self.prev_mouseX = x
                 self.prev_mouseY = y
             
-            self.need_update = True
-
             if self.debug:
                 dpg.set_value("_log_pose", str(self.cam.pose))
                 
@@ -609,7 +905,6 @@ class GUI:
             delta = app_data
 
             self.cam.scale(delta)
-            self.need_update = True
 
             if self.debug:
                 dpg.set_value("_log_pose", str(self.cam.pose))
@@ -623,7 +918,6 @@ class GUI:
             dy = app_data[2]
 
             self.cam.pan(dx, dy)
-            self.need_update = True
 
             if self.debug:
                 dpg.set_value("_log_pose", str(self.cam.pose))
@@ -636,7 +930,7 @@ class GUI:
             dpg.add_mouse_wheel_handler(callback=callback_camera_wheel_scale)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Right, callback=callback_camera_drag_pan)
 
-        dpg.create_viewport(title='iVR-GS', width=self.imgW+self.ctrlW, height=self.imgH, resizable=False)
+        dpg.create_viewport(title='iVR-GS', width=self.imgW+self.ctrlW, height=self.imgH+160, resizable=False)
 
         ### global theme
         with dpg.theme() as theme_no_padding:
@@ -699,7 +993,7 @@ if __name__ == '__main__':
         palette_color_transform.create_from_ckpt(f"{scene_dict[TFs_name]['palette']}")
         palette_color_transforms.append(palette_color_transform)
         # ic(TFcount)
-        opacity_factor=0.0 if TFcount not in [] else 1.0
+        opacity_factor = 1.0
         opacity_transform = LearningOpacityTransform(opacity_factor=opacity_factor)
         opacity_transforms.append(opacity_transform)
         TFcount+=1
