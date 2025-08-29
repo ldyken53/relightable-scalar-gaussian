@@ -67,8 +67,7 @@ def scene_composition(scene_dict: dict, dataset: ModelParams):
     for scene in scene_dict:
         gaussians = ScalarGaussianModel(render_type="phong")
         print("Compose scene from GS path:", scene_dict[scene]["path"])
-        # gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
-        gaussians.create_from_ckpt("output/skull-scalar/TF02/neilf/chkpnt40000.pth")
+        gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
         
         torch_transform = torch.tensor(scene_dict[scene]["transform"], device="cuda").reshape(4, 4)
         gaussians.set_transform(transform=torch_transform)
@@ -181,6 +180,7 @@ class GUI:
         self.TFnums = TFnums
         self.render_fn = render_fn
         self.render_kwargs = render_kwargs
+        self.selected_colormap = "rainbow"
         
         #* in case if you wish to use StyleRF-VolVis Camera Control
         # self.cam = OrbitCamera(self.imgW, self.imgH, fovy=fovy * 180 / np.pi, rot=rot, translate=translate, center=center)
@@ -268,7 +268,8 @@ class GUI:
         fovx = fovy * W / H
         custom_cam = Camera(colmap_id=0, R=R, T=-T,
                             FoVx=fovx, FoVy=fovy, fx=None, fy=None, cx=None, cy=None,
-                            image=torch.zeros(3, H, W), image_name=None, uid=0)
+                            image=torch.zeros(3, H, W), image_name=None, uid=0, 
+                            colormap=self.selected_colormap)
         return custom_cam
 
     @torch.no_grad()
@@ -322,7 +323,7 @@ class GUI:
             dpg.add_slider_float(
                 tag=slider_tag,
                 label='',
-                default_value=0,
+                default_value=1.0,
                 min_value=0,
                 max_value=3.0,
                 height=300,
@@ -332,6 +333,12 @@ class GUI:
                 width=slider_width, 
                 indent=indent
             )
+
+
+    def get_colormap_options(self):
+        """Return list of 10 popular matplotlib colormap names"""
+        return ["viridis", "plasma", "inferno", "magma", "cividis", 
+                "jet", "rainbow", "coolwarm", "seismic", "RdYlBu"]
 
 
     def register_dpg(self):
@@ -393,6 +400,16 @@ class GUI:
                     bg_color = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
                     self.render_kwargs["bg_color"] = bg_color
                     self.need_update = True
+
+                def callback_change_colormap(sender, app_data):
+                    self.selected_colormap = app_data
+                    self.need_update = True
+
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Colormap")
+                    dpg.add_combo(self.get_colormap_options(), indent=self.widget_top, 
+                                label='', default_value="rainbow", 
+                                callback=callback_change_colormap)
                   
                 
                 with dpg.group(horizontal=True):

@@ -413,13 +413,12 @@ def rendering_equation_BlinnPhong_python(opacity_transforms, light_transform, op
     incident_dirs = incidents_dirs.unsqueeze(-2).contiguous()
     diffuse_color = color.clone()
     
-    if len(num_GSs_TFs) > 1: # for multi GS rendering
-        start_GS = 0
-        for i in range(len(num_GSs_TFs)):
-            end_GS = num_GSs_TFs[i] + start_GS
-            if opacity_transforms is not None:
-                opacity[start_GS:end_GS,:] = opacity[start_GS:end_GS,:] * opacity_transforms[i].opacity_factor
-            start_GS = end_GS
+    start_GS = 0
+    for i in range(len(num_GSs_TFs)):
+        end_GS = num_GSs_TFs[i] + start_GS
+        if opacity_transforms is not None:
+            opacity[start_GS:end_GS,:] = opacity[start_GS:end_GS,:] * opacity_transforms[i].opacity_factor
+        start_GS = end_GS
 
     #* light_intesity = kd
     #* diffuse color 

@@ -389,6 +389,7 @@ def rendering_equation_BlinnPhong_python(palette_color_transforms, opacity_trans
             start_GS = end_GS
     else: # for individual GS optimization
         diffuse_color = offset_color+palette_color_transforms[0].palette_color.clamp(0,1).detach()
+        opacity = opacity * opacity_factors[i]
     
     #* light_intesity = kd, offset_color = offset_color
     #* diffuse color 

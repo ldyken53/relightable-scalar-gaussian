@@ -56,13 +56,12 @@ class Camera(nn.Module):
         else:
             self.image_mask = torch.ones_like(self.depth)
 
-        if colormap is not None:
-            self.colormap = colormap
-        else:
-            cmap = plt.cm.get_cmap("rainbow")
-            control_points = np.linspace(0.0, 1.0, 100)
-            colors = cmap(control_points)[:, :3]
-            self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
+        if colormap is None:
+            colormap = "rainbow"
+        cmap = plt.cm.get_cmap(colormap)
+        control_points = np.linspace(0.0, 1.0, 100)
+        colors = cmap(control_points)[:, :3]
+        self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
 
         if opac_map is not None:
             self.opac_map = colormap
@@ -85,7 +84,7 @@ class Camera(nn.Module):
                     dist = abs(x - center)
                     arr[i] = max(0, 1 - (dist * 2 * 1 * (3 / 2)))
                 opacs.append(arr)
-            self.opac_map = torch.tensor(opacs[2].reshape(-1, 1), dtype=torch.float32).to("cuda")
+            self.opac_map = torch.tensor(opacs[1].reshape(-1, 1), dtype=torch.float32).to("cuda")
 
         self.zfar = 100.0
         self.znear = 0.01
