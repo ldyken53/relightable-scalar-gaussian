@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 import torchvision
 from gaussian_renderer import render_fn_dict
-from scene import GaussianModel
+from scene import ScalarGaussianModel
 from utils.general_utils import safe_state
 from utils.camera_utils import Camera, JSON_to_camera
 from argparse import ArgumentParser
@@ -53,13 +53,11 @@ def load_ckpts_paths(source_dir):
 
     ckpts_transforms = {}
     for idx, TF_folder in enumerate(TFs_folders):
-        one_TF_json = {'path': None, 'palette':None, 'transform': [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
+        one_TF_json = {'path': None, 'transform': [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
         ckpt_dir = os.path.join(TF_folder,"neilf","point_cloud")
         max_iters = searchForMaxIteration(ckpt_dir)
         ckpt_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "point_cloud.ply")
-        palette_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "palette_colors_chkpnt.pth")
         one_TF_json['path'] = ckpt_path
-        one_TF_json['palette'] = palette_path
         ckpts_transforms[TFs_names[idx]] = one_TF_json
 
     return ckpts_transforms
@@ -67,16 +65,17 @@ def load_ckpts_paths(source_dir):
 def scene_composition(scene_dict: dict, dataset: ModelParams):
     gaussians_list = []
     for scene in scene_dict:
-        gaussians = GaussianModel(dataset.sh_degree, render_type="phong")
+        gaussians = ScalarGaussianModel(render_type="phong")
         print("Compose scene from GS path:", scene_dict[scene]["path"])
-        gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
+        # gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
+        gaussians.create_from_ckpt("output/skull-scalar/TF02/neilf/chkpnt40000.pth")
         
         torch_transform = torch.tensor(scene_dict[scene]["transform"], device="cuda").reshape(4, 4)
         gaussians.set_transform(transform=torch_transform)
 
         gaussians_list.append(gaussians)
 
-    gaussians_composite = GaussianModel.create_from_gaussians(gaussians_list, dataset)
+    gaussians_composite = ScalarGaussianModel.create_from_gaussians(gaussians_list, dataset)
     n = gaussians_composite.get_xyz.shape[0]
     print(f"Totally {n} points loaded.")
 
@@ -182,7 +181,6 @@ class GUI:
         self.TFnums = TFnums
         self.render_fn = render_fn
         self.render_kwargs = render_kwargs
-        self.original_palette_colors = [self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color for TFidx in range(TFnums)]
         
         #* in case if you wish to use StyleRF-VolVis Camera Control
         # self.cam = OrbitCamera(self.imgW, self.imgH, fovy=fovy * 180 / np.pi, rot=rot, translate=translate, center=center)
@@ -298,8 +296,8 @@ class GUI:
             self.menu_map = {"phong": "Blinn-Phong", "normal": "Normal", "diffuse_term": "Diffuse",
                              "specular_term": "Specular", "ambient_term": "Ambient"}
             self.inv_menu_map = {v: k for k, v in self.menu_map.items()}
-            self.menu = [self.menu_map[k] for k, v in render_pkg.items() if
-                         k not in ["pseudo_normal","render", "num_contrib", "surface_xyz", "diffuse_factor","depth", "shininess", "ambient_factor", "specular_factor", "offset_color", "opacity"] and isinstance(v, torch.Tensor) and np.array(v.shape).prod() % (self.imgH * self.imgW) == 0]
+            # self.menu = [self.menu_map[k] for k, v in render_pkg.items() if
+            #              k not in ["pseudo_normal","render", "num_contrib", "surface_xyz", "diffuse_factor","depth", "shininess", "ambient_factor", "specular_factor", "offset_color", "opacity", "color_render"] and isinstance(v, torch.Tensor) and np.array(v.shape).prod() % (self.imgH * self.imgW) == 0]
             self.menu = ["Blinn-Phong", "Ambient", "Diffuse", "Specular", "Normal"]
             
         else:
@@ -313,16 +311,7 @@ class GUI:
                 self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(app_data, dtype=torch.float32, device="cuda")
             self.need_update = True
         
-        def callback_TF_color_edit(sender, app_data):
-            TFidx = int(sender.replace("_color_TF", "")) - 1
-            with torch.no_grad():
-                self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color = torch.tensor(app_data[:3], dtype=torch.float32, device="cuda")
-            self.need_update = True
-        
         slider_tag = "_slider_TF" + str(TFidx+1)
-        color_tag = "_color_TF" + str(TFidx+1)
-        defualt_color = self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color.detach().cpu().numpy()
-        defualt_color = (defualt_color * 255).astype(np.uint8).tolist()
         
         # indent = self.widget_indent if TFidx == 0 else 0
         indent = 0
@@ -343,11 +332,7 @@ class GUI:
                 width=slider_width, 
                 indent=indent
             )
-            dpg.add_color_edit(tag=color_tag, default_value=defualt_color, callback=callback_TF_color_edit,
-                               no_inputs=True, no_label=True, no_alpha=True, indent=indent+slider_width//4)
 
-            
-        
 
     def register_dpg(self):
 
@@ -440,10 +425,7 @@ class GUI:
                         with torch.no_grad():
                             for TFidx in range(self.TFnums):
                                 self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(1.0, dtype=torch.float32, device="cuda")
-                                self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color = self.original_palette_colors[TFidx]
-                                color_value = [int(x*255) for x in self.original_palette_colors[TFidx].detach().cpu().numpy()]
                                 dpg.set_value(f"_slider_TF{TFidx+1}", 1)
-                                dpg.set_value(f"_color_TF{TFidx+1}", tuple(color_value))
                         self.need_update = True
                     with dpg.group(horizontal=True):
                         dpg.add_button(label="Reset Color & Opacity", tag="_button_reset_color_opacity",width=self.ctrlW-15, callback=callback_reset_color_opacity)
@@ -643,20 +625,11 @@ if __name__ == '__main__':
     scene_dict = load_ckpts_paths(args.source_dir)
     TFs_names = list(scene_dict.keys())
     TFs_nums = len(TFs_names)
-    palette_color_transforms = []
     opacity_transforms = []
-    TFcount=0
     for TFs_name in TFs_names:
-        
-        palette_color_transform = LearningPaletteColor()
-        palette_color_transform.create_from_ckpt(f"{scene_dict[TFs_name]['palette']}")
-        palette_color_transforms.append(palette_color_transform)
-        # ic(TFcount)
-        opacity_factor=0.0 if TFcount not in [] else 1.0
+        opacity_factor = 1.0
         opacity_transform = LearningOpacityTransform(opacity_factor=opacity_factor)
-        opacity_transforms.append(opacity_transform)
-        TFcount+=1
-        
+        opacity_transforms.append(opacity_transform)        
         
     light_transform = LearningLightTransform(theta=180, phi=0)
     # load gaussians
@@ -670,7 +643,6 @@ if __name__ == '__main__':
         "bg_color": background,
         "is_training": False,
         "dict_params": {
-            "palette_colors": palette_color_transforms,
             "opacity_factors": opacity_transforms,
             "light_transform": light_transform
         }
@@ -679,7 +651,7 @@ if __name__ == '__main__':
     # ic(scene_dict)
     # ic(checkpoints)
         
-    render_fn = render_fn_dict[args.type]
+    render_fn = render_fn_dict[f"scalar_{args.type}"]
     
     #* remove this if remove --vo argument
     
