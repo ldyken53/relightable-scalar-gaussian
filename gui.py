@@ -26,6 +26,7 @@ from scene.opacity_trans import LearningOpacityTransform
 from scene.light_trans import LearningLightTransform
 from pyquaternion import Quaternion
 import cv2
+import matplotlib.pyplot as plt
 
 
 def screen_to_arcball(p:np.ndarray):
@@ -347,7 +348,43 @@ class GUI:
                                no_inputs=True, no_label=True, no_alpha=True, indent=indent+slider_width//4)
 
             
-        
+    def get_colormap_options(self):
+        """Return list of 10 popular matplotlib colormap names"""
+        return ["viridis", "plasma", "inferno", "magma", "cividis", 
+                "jet", "rainbow", "coolwarm", "seismic", "RdYlBu"]
+    
+
+    def apply_colormap_to_palette(self, colormap_name):
+        """Apply colormap colors to palette colors based on evenly spaced intervals"""
+        try:
+            # Get the colormap
+            cmap = plt.cm.get_cmap(colormap_name)
+            
+            # Calculate the midpoint of each interval
+            for TFidx in range(self.TFnums):
+                # Calculate the interval for this TF
+                interval_start = TFidx / self.TFnums
+                interval_end = (TFidx + 1) / self.TFnums
+                midpoint = (interval_start + interval_end) / 2.0
+                
+                # Get the color from the colormap at the midpoint
+                rgba_color = cmap(midpoint)  # Returns (r, g, b, a) in [0, 1]
+                rgb_color = rgba_color[:3]  # Take only RGB, ignore alpha
+                
+                # Convert to tensor and assign to palette color
+                with torch.no_grad():
+                    self.render_kwargs["dict_params"]["palette_colors"][TFidx].palette_color = torch.tensor(
+                        rgb_color, dtype=torch.float32, device="cuda"
+                    )
+                
+                # Update the color picker UI element
+                color_tag = f"_color_TF{TFidx+1}"
+                color_value = [int(c * 255) for c in rgb_color]
+                dpg.set_value(color_tag, color_value)
+                
+        except Exception as e:
+            print(f"Error applying colormap {colormap_name}: {e}")
+    
 
     def register_dpg(self):
 
@@ -402,6 +439,16 @@ class GUI:
                     dpg.add_text("Field of View")
                     dpg.add_slider_int(label="",indent=self.widget_top, min_value=1, max_value=120, format="%d deg",
                                    default_value=self.cam.fovy, callback=callback_set_fovy)
+                    
+                def callback_change_colormap(sender, app_data):
+                    self.apply_colormap_to_palette(app_data)
+                    self.need_update = True
+
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Colormap")
+                    dpg.add_combo(self.get_colormap_options(), indent=self.widget_top, 
+                                label='', default_value="rainbow", 
+                                callback=callback_change_colormap)
                     
                 def callback_set_BG_color(sender, app_data):
                     bg_color = app_data[:3]
