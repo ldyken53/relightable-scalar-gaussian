@@ -169,7 +169,10 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     # exit()
     if light_transform:
         light_pos = light_transform.get_light_dir()
-        incidents_dirs = F.normalize(light_pos, dim=-1).detach().contiguous() #* orbital light with directional lighting
+        if light_pos is not None:
+            incidents_dirs = F.normalize(light_pos, dim=-1).detach().contiguous() #* orbital light with directional lighting
+        else:
+            incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
     else:
         incidents_dirs = viewdirs.detach().contiguous() #* now we are using headlights
     # ic(incidents.shape) # [N, 16, 3]
