@@ -64,7 +64,7 @@ class Camera(nn.Module):
         self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
 
         if opac_map is not None:
-            self.opac_map = colormap
+            self.opac_map = opac_map
         else:
             # indices = np.arange(100)
             # bins = np.linspace(0, 100, 3+1).astype(int)

@@ -9,7 +9,8 @@ import cv2
 from gaussian_renderer import render_fn_dict
 import numpy as np
 import torch
-from scene import GaussianModel
+import re
+from scene import GaussianModel, ScalarGaussianModel
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams
 from scene.cameras import Camera
@@ -17,11 +18,15 @@ from utils.graphics_utils import focal2fov, fov2focal
 from utils.system_utils import searchForMaxIteration
 from torchvision.utils import save_image
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
+from utils.image_utils import psnr
+from utils.loss_utils import ssim
 from scene.palette_color import LearningPaletteColor
 from scene.opacity_trans import LearningOpacityTransform
 from scene.light_trans import LearningLightTransform
 import glob
+from lpipsPyTorch import lpips
 from time import time_ns
 
 def load_json_config(json_file):
@@ -45,10 +50,13 @@ def load_ckpts_paths(source_dir):
     ckpts_transforms['0'] = one_TF_json
     return ckpts_transforms
 
-def scene_composition(scene_dict: dict, dataset: ModelParams):
+def scene_composition(scene_dict: dict, dataset: ModelParams, is_scalar = False):
     gaussians_list = []
     for scene in scene_dict:
-        gaussians = GaussianModel(dataset.sh_degree, render_type="phong")
+        if is_scalar:
+            gaussians = ScalarGaussianModel(render_type="phong")
+        else:
+            gaussians = GaussianModel(dataset.sh_degree, render_type="phong")
         print("Compose scene from GS path:", scene_dict[scene]["path"])
         gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
         # gaussians.my_load_ply(scene_dict[scene]["path"], quantised=False, half_float=False)
@@ -57,8 +65,10 @@ def scene_composition(scene_dict: dict, dataset: ModelParams):
         gaussians.set_transform(transform=torch_transform)
 
         gaussians_list.append(gaussians)
-
-    gaussians_composite = GaussianModel.create_from_gaussians(gaussians_list, dataset)
+    if is_scalar:
+        gaussians_composite = ScalarGaussianModel.create_from_gaussians(gaussians_list, dataset)
+    else:
+        gaussians_composite = GaussianModel.create_from_gaussians(gaussians_list, dataset)
     n = gaussians_composite.get_xyz.shape[0]
     print(f"Totally {n} points loaded.")
 
@@ -96,6 +106,12 @@ def render_points(camera, gaussians):
 
     return rgb_buffer
 
+def numpy_to_tensor(img):
+    """Convert numpy image (H,W,C) to tensor (C,H,W) and normalize to [0,1]"""
+    img = img.astype(np.float32) / 255.0  # Convert to float and normalize
+    img = torch.from_numpy(img).permute(2, 0, 1)  # HWC to CHW
+    return img
+
 
 if __name__ == '__main__':
     # Set up command line argument parser
@@ -114,6 +130,8 @@ if __name__ == '__main__':
     parser.add_argument('--useHeadlight', action='store_true', help="If True, use head light.")
     parser.add_argument('--evaluation', action='store_false', help="If True, eval mode.")
     parser.add_argument('--EvalTime', action='store_true', help="If True, eval time, not save images.")
+    parser.add_argument('--is_scalar', action='store_true', default=False)
+    parser.add_argument('--TFnums', type=int, default=10)
     args = parser.parse_args()
     dataset = model.extract(args)
     pipe = pipeline.extract(args)
@@ -121,6 +139,9 @@ if __name__ == '__main__':
 
     # load configs
     view_config_file = f"{args.view_config}/cameras_test.json"
+    final_folder = os.path.basename(os.path.normpath(args.view_config))
+    TFidx = int(re.search(r'\d+$', final_folder).group()) - 1
+    print(f"TFidx is: {TFidx}")
     scene_dict = load_ckpts_paths(args.source_dir)
     TFs_names = list(scene_dict.keys())
     TFs_nums = len(TFs_names)
@@ -141,7 +162,7 @@ if __name__ == '__main__':
         
     light_transform = LearningLightTransform(theta=180, phi=0)
     # load gaussians
-    gaussians_composite = scene_composition(scene_dict, dataset)
+    gaussians_composite = scene_composition(scene_dict, dataset, args.is_scalar)
 
     # rendering
     capture_dir = args.output
@@ -156,7 +177,7 @@ if __name__ == '__main__':
     if bg is None:
         bg = 1 if dataset.white_background else 0
     background = torch.tensor([bg, bg, bg], dtype=torch.float32, device="cuda")
-    render_fn = render_fn_dict["phong"]
+    render_fn = render_fn_dict[f"{'scalar_' if args.is_scalar else ''}phong"]
 
     render_kwargs = {
         "pc": gaussians_composite,
@@ -204,6 +225,20 @@ if __name__ == '__main__':
         custom_cam = Camera(colmap_id=0, R=R, T=T,
                             FoVx=fovx, FoVy=fovy, fx=None, fy=None, cx=None, cy=None,
                             image=torch.zeros(3, H, W), image_name=None, uid=0, colormap=cam_info.get("colormap"))
+        if not args.is_scalar and cam_info.get("colormap"):
+            cmap = plt.cm.get_cmap(cam_info["colormap"])
+            # Calculate the interval for this TF
+            interval_start = TFidx / args.TFnums
+            interval_end = (TFidx + 1) / args.TFnums
+            midpoint = (interval_start + interval_end) / 2.0
+            # Get the color from the colormap at the midpoint
+            rgba_color = cmap(midpoint)  # Returns (r, g, b, a) in [0, 1]
+            rgb_color = rgba_color[:3]  # Take only RGB, ignore alpha
+            # Convert to tensor and assign to palette color
+            with torch.no_grad():
+                render_kwargs["dict_params"]["palette_colors"][0].palette_color = torch.tensor(
+                    rgb_color, dtype=torch.float32, device="cuda"
+                )
       
         
         if light_angle is not None:
@@ -235,6 +270,9 @@ if __name__ == '__main__':
         GTImgPaths = sorted(glob.glob(f"{args.view_config}/test/*.png"))
         evalImgPaths = sorted(glob.glob(f"{capture_dir}/phong/*.png"))
         psnr_test = 0
+        psnr2_test = 0
+        lpips_test = 0
+        ssim_test = 0
         
         for idx, evalImgPath in enumerate(evalImgPaths):
             evalImg = cv2.imread(evalImgPath) 
@@ -246,13 +284,20 @@ if __name__ == '__main__':
                 GTImg = (GTImg[:, :, :3] * alpha[:, :, None] + white_bg * (1 - alpha[:, :, None])).astype(np.uint8)
             else:
                 GTImg = GTImg[:, :, :3]
-            psnr_test += cv2.PSNR(GTImg, evalImg)
+            GTtensor = numpy_to_tensor(GTImg)
+            evaltensor = numpy_to_tensor(evalImg)
+            psnr_test += psnr(GTtensor, evaltensor).mean().double()
+            ssim_test += ssim(GTtensor, evaltensor).mean().double()
+            psnr2_test += cv2.PSNR(GTImg, evalImg)
+            # lpips_test += lpips(GTtensor, evaltensor, net_type='vgg').mean().double()
             diff = cv2.absdiff(GTImg, evalImg)
             cv2.imwrite(f"{capture_dir}/diff{idx}.png", diff)
-
-            # print(f"PSNR for {idx}: {cv2.PSNR(GTImg, evalImg)}")
+            # print(f"{idx}")
         psnr_test /= len(evalImgPaths)
-        print(f"PSNR: {psnr_test}")
+        lpips_test /= len(evalImgPaths)
+        ssim_test /= len(evalImgPaths)
+        psnr2_test /= len(evalImgPaths)
+        print(f"Tensor PSNR: {psnr_test}, LPIPS: {lpips_test}, SSIM: {ssim_test}, PSNR: {psnr2_test}")
 
 
     # output as video
