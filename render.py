@@ -120,7 +120,7 @@ if __name__ == '__main__':
     
 
     # load configs
-    view_config_file = f"{args.view_config}/transforms_test.json"
+    view_config_file = f"{args.view_config}/cameras_test.json"
     scene_dict = load_ckpts_paths(args.source_dir)
     TFs_names = list(scene_dict.keys())
     TFs_nums = len(TFs_names)
@@ -156,7 +156,7 @@ if __name__ == '__main__':
     if bg is None:
         bg = 1 if dataset.white_background else 0
     background = torch.tensor([bg, bg, bg], dtype=torch.float32, device="cuda")
-    render_fn = render_fn_dict["inverse"]
+    render_fn = render_fn_dict["phong"]
 
     render_kwargs = {
         "pc": gaussians_composite,
@@ -177,25 +177,33 @@ if __name__ == '__main__':
     fovx = 30 * np.pi / 180
     fovy = focal2fov(fov2focal(fovx, W), H)
 
-    progress_bar = tqdm(view_dict["frames"], desc="Rendering")
+    progress_bar = tqdm(view_dict, desc="Rendering")
     time_log = []
     for idx, cam_info in enumerate(progress_bar):
         tic = time_ns()
         # cam_info = traject_dict["trajectory"].items()
         # ic(cam_info)
-        cam_pose = cam_info['transform_matrix']
+        # cam_pose = cam_info['transform_matrix']
         light_angle = cam_info.get('light_angle', None)
-        # exit()
+        # # exit()
 
-        c2w = np.array(cam_pose, dtype=np.float32).reshape(4, 4) 
+        # c2w = np.array(cam_pose, dtype=np.float32).reshape(4, 4) 
         
-        c2w[:3, 1:3] *= -1
-        w2c = np.linalg.inv(c2w)
-        R = w2c[:3, :3].T # R is stored transposed due to 'glm' in CUDA code
-        T = w2c[:3, 3]
+        # c2w[:3, 1:3] *= -1
+        # w2c = np.linalg.inv(c2w)
+        # R = w2c[:3, :3].T # R is stored transposed due to 'glm' in CUDA code
+        # T = w2c[:3, 3]
+        R_w2c = np.array(cam_info["R"])      # as written in JSON
+        C      = np.array(cam_info["T"])     # camera centre
+
+        R = R_w2c.T                       # convert to C2W
+        T = -R_w2c @ C                    # *use the ORIGINAL W2C* to build t
+
+        fovx = cam_info["FovX"]
+        fovy = cam_info["FovY"]
         custom_cam = Camera(colmap_id=0, R=R, T=T,
                             FoVx=fovx, FoVy=fovy, fx=None, fy=None, cx=None, cy=None,
-                            image=torch.zeros(3, H, W), image_name=None, uid=0)
+                            image=torch.zeros(3, H, W), image_name=None, uid=0, colormap=cam_info.get("colormap"))
       
         
         if light_angle is not None:
@@ -203,7 +211,7 @@ if __name__ == '__main__':
         
         
         with torch.no_grad():
-            render_pkg = render_fn(viewpoint_camera=custom_cam, **render_kwargs)
+            render_pkg = render_fn(camera=custom_cam, **render_kwargs)
         
      
         if not args.EvalTime:
@@ -234,11 +242,13 @@ if __name__ == '__main__':
 
             if GTImg.shape[2] == 4:
                 alpha = GTImg[:, :, 3] / 255.0  
-                white_bg = np.ones_like(GTImg[:, :, :3]) * 255  
+                white_bg = np.zeros_like(GTImg[:, :, :3]) * 255  
                 GTImg = (GTImg[:, :, :3] * alpha[:, :, None] + white_bg * (1 - alpha[:, :, None])).astype(np.uint8)
             else:
                 GTImg = GTImg[:, :, :3]
             psnr_test += cv2.PSNR(GTImg, evalImg)
+            diff = cv2.absdiff(GTImg, evalImg)
+            cv2.imwrite(f"{capture_dir}/diff{idx}.png", diff)
 
             # print(f"PSNR for {idx}: {cv2.PSNR(GTImg, evalImg)}")
         psnr_test /= len(evalImgPaths)
@@ -252,7 +262,7 @@ if __name__ == '__main__':
         for capture_type in progress_bar:
             video_path = f"{capture_dir}/{capture_type}.mp4"
             image_names = [os.path.join(capture_dir, capture_type, f"frame_{int(j):04d}.png") for j in
-                           range(len(view_dict["frames"]))]
+                           range(len(view_dict))]
             media_writer = cv2.VideoWriter(video_path, fourcc, 60, (W, H))
 
             for image_name in image_names:
