@@ -462,6 +462,9 @@ class GUI:
         self.render_fn = render_fn
         self.render_kwargs = render_kwargs
         self.selected_colormap = "rainbow"
+        self.selected_opacmap = torch.tensor(
+                np.ones(100).reshape(-1, 1), 
+                dtype=torch.float32).to("cuda")
         
         #* in case if you wish to use StyleRF-VolVis Camera Control
         # self.cam = OrbitCamera(self.imgW, self.imgH, fovy=fovy * 180 / np.pi, rot=rot, translate=translate, center=center)
@@ -550,7 +553,7 @@ class GUI:
         custom_cam = Camera(colmap_id=0, R=R, T=-T,
                             FoVx=fovx, FoVy=fovy, fx=None, fy=None, cx=None, cy=None,
                             image=torch.zeros(3, H, W), image_name=None, uid=0, 
-                            colormap=self.selected_colormap)
+                            colormap=self.selected_colormap, opac_map=self.selected_opacmap)
         return custom_cam
 
     @torch.no_grad()
@@ -620,6 +623,9 @@ class GUI:
         def opacity_map_callback(editor):
             """Callback when opacity map changes"""
             # Apply opacity values to each TF based on their interval midpoints
+            self.selected_opacmap = torch.tensor(
+                np.array([x[1] for x in editor.opacity_curve]).reshape(-1, 1), 
+                dtype=torch.float32).to("cuda")
             for TFidx in range(self.TFnums):
                 interval_start = TFidx / self.TFnums
                 interval_end = (TFidx + 1) / self.TFnums
