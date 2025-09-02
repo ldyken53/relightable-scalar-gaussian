@@ -646,8 +646,8 @@ class GUI:
 
     def get_colormap_options(self):
         """Return list of 10 popular matplotlib colormap names"""
-        return ["viridis", "plasma", "inferno", "magma", "cividis", 
-                "jet", "rainbow", "coolwarm", "seismic", "RdYlBu"]
+        return ["rainbow", "rainbow_r", "viridis", "plasma", "inferno", "Blues", "Purples", 
+                "jet", "coolwarm", "coolwarm_r", "RdYlBu"]
 
     def register_dpg(self):
 
@@ -704,15 +704,6 @@ class GUI:
                     bg_color = app_data[:3]
                     bg_color = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
                     self.render_kwargs["bg_color"] = bg_color
-
-                def callback_change_colormap(sender, app_data):
-                    self.selected_colormap = app_data
-
-                with dpg.group(horizontal=True):
-                    dpg.add_text("Colormap")
-                    dpg.add_combo(self.get_colormap_options(), indent=self.widget_top, 
-                                label='', default_value="rainbow", 
-                                callback=callback_change_colormap)
                   
                 
                 with dpg.group(horizontal=True):
@@ -737,19 +728,27 @@ class GUI:
                                     
             # color & opacity editing
             with dpg.collapsing_header(label="Color & Opacity Editing", default_open=True, leaf=True):
-                    self.add_opacity_map_to_gui()
-                    with dpg.group(horizontal=True, horizontal_spacing=0):
-                        for i in range(self.TFnums):
-                            self.add_oneTFSlider(i)
-                    def callback_reset_color_opacity(sender, app_data):
-                        with torch.no_grad():
-                            for TFidx in range(self.TFnums):
-                                self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(1.0, dtype=torch.float32, device="cuda")
-                                dpg.set_value(f"_slider_TF{TFidx+1}", 1)
-                    with dpg.group(horizontal=True):
-                        dpg.add_button(label="Reset Color & Opacity", tag="_button_reset_color_opacity",width=self.ctrlW-15, callback=callback_reset_color_opacity)
-                        dpg.bind_item_theme("_button_reset_color_opacity", self.theme_button)
-                        # dpg.bind_item_theme("_button_save_color_opacity", self.theme_button)
+                self.add_opacity_map_to_gui()
+                with dpg.group(horizontal=True, horizontal_spacing=0):
+                    for i in range(self.TFnums):
+                        self.add_oneTFSlider(i)
+                def callback_reset_color_opacity(sender, app_data):
+                    with torch.no_grad():
+                        for TFidx in range(self.TFnums):
+                            self.render_kwargs["dict_params"]["opacity_factors"][TFidx].opacity_factor = torch.tensor(1.0, dtype=torch.float32, device="cuda")
+                            dpg.set_value(f"_slider_TF{TFidx+1}", 1)
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="Reset Color & Opacity", tag="_button_reset_color_opacity",width=self.ctrlW-15, callback=callback_reset_color_opacity)
+                    dpg.bind_item_theme("_button_reset_color_opacity", self.theme_button)
+                    # dpg.bind_item_theme("_button_save_color_opacity", self.theme_button)
+                def callback_change_colormap(sender, app_data):
+                    self.selected_colormap = app_data
+
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Colormap")
+                    dpg.add_combo(self.get_colormap_options(), indent=self.widget_top, 
+                                label='', default_value="rainbow", 
+                                callback=callback_change_colormap)
                             
             # light editing
             with dpg.collapsing_header(label="Light Editing", default_open=True, leaf=True):

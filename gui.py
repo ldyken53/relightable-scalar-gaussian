@@ -658,8 +658,8 @@ class GUI:
 
     def get_colormap_options(self):
         """Return list of 10 popular matplotlib colormap names"""
-        return ["viridis", "plasma", "inferno", "magma", "cividis", 
-                "jet", "rainbow", "coolwarm", "seismic", "RdYlBu"]
+        return ["rainbow", "rainbow_r", "viridis", "plasma", "inferno", "Blues", "Purples", 
+                "jet", "coolwarm", "coolwarm_r", "RdYlBu"]
     
 
     def apply_colormap_to_palette(self, colormap_name):
