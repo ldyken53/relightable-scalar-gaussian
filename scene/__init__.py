@@ -44,7 +44,7 @@ class Scene:
         self.test_cameras = {}
 
         # print("Found transforms_train.json file, assuming Blender data set!")
-        scene_info = sceneLoadTypeCallbacks["Raw"](args.source_path, args.white_background, args.eval,
+        scene_info = sceneLoadTypeCallbacks["RawSet"](args.source_path, args.white_background, args.eval,
                                                         debug=args.debug_cuda)
         # ic(scene_info.train_cameras[0].light_dir) #OK
         # exit()

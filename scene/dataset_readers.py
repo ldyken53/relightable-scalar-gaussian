@@ -353,6 +353,65 @@ def readCamerasFromJSON(path, camerasfile, white_background, extension=".png", d
     return cam_infos
 
 
+def readRawSetInfo(path, white_background, eval, extension=".png", debug=False):
+    print("Reading Training Cameras")
+    subdirs = sorted(
+        d for d in os.listdir(path)
+        if os.path.isdir(os.path.join(path, d)) and d.startswith("TF")
+    )
+    print(f"Found {len(subdirs)} folders:", ", ".join(subdirs))
+
+    train_cam_infos, test_cam_infos = [], []
+    for sd in subdirs:
+        full_sd = os.path.join(path, sd)
+
+        train_cam_infos.extend(
+            readCamerasFromJSON(full_sd, "cameras_train.json",
+                                white_background, extension, debug=debug)
+        )
+
+        if eval:
+            test_cam_infos.extend(
+                readCamerasFromJSON(full_sd, "cameras_test.json",
+                                    white_background, extension, debug=debug)
+            )
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = os.path.join(path, "points3d.ply")
+
+    if not os.path.exists(ply_path):
+        num_pts = 100_000
+        print(f"Generating random point cloud ({num_pts})...")
+
+        # We create random points inside the bounds of the Pyvista volume scenes
+        bbox_min = np.array([0.0, 0.0, 3.0])
+        bbox_max = np.array([1.0, 1.0, 4.0])
+        pad = 0.01 * (bbox_max - bbox_min).max()
+        bbox_min -= pad
+        bbox_max += pad
+
+        xyz = np.random.rand(num_pts, 3) * (bbox_max - bbox_min) + bbox_min
+        shs = np.random.random((num_pts, 3)) / 255.0
+        normals = np.random.randn(*xyz.shape)
+        normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+
+        storePly(ply_path, xyz, SH2RGB(shs) * 255, normals)
+
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+
+    return scene_info
+
+
 def readRawInfo(path, white_background, eval, extension=".png", debug=False):
     print("Reading Training Cameras")
     train_cam_infos = readCamerasFromJSON(path, "cameras_train.json", white_background, extension, debug=debug)
@@ -543,4 +602,5 @@ sceneLoadTypeCallbacks = {
     "Blender": readNerfSyntheticInfo,
     "NeILF": readNeILFInfo,
     "Raw": readRawInfo,
+    "RawSet": readRawSetInfo,
 }

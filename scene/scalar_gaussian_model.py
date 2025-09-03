@@ -363,8 +363,9 @@ class ScalarGaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-        scalars = inverse_sigmoid(torch.clamp(self.TFscalar + (torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") - 0.5) * 2 * 0.01, 
-                                              0.0, 1.0))
+        # scalars = inverse_sigmoid(torch.clamp(self.TFscalar + (torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") - 0.5) * 2 * 0.01, 
+        #                                       0.0, 1.0))
+        scalars = inverse_sigmoid((torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")))
         self._scalar = nn.Parameter(scalars.clone().requires_grad_(True))
         self._scalar2 = nn.Parameter(scalars.clone().requires_grad_(True))
 
