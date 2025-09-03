@@ -36,6 +36,8 @@ class CameraInfo(NamedTuple):
     image_name: str
     width: int
     height: int
+    colormap: str
+    opac_map: int
 
 
 def caminfo_to_dict(cam: CameraInfo) -> dict:
@@ -49,6 +51,8 @@ def caminfo_to_dict(cam: CameraInfo) -> dict:
         "image_name": cam.image_name,
         "width": cam.width,
         "height": cam.height,
+        "colormap": cam.colormap,
+        "opac_map": cam.opac_map
     }
 
 
@@ -94,7 +98,8 @@ def buildRawDataset(
     raw_file,
     num_maps,
     triangular,
-    shade
+    shade,
+    random_colormaps
 ):
     print(shade)
     start_time = time.time()
@@ -119,7 +124,11 @@ def buildRawDataset(
                 dist = abs(x - center)
                 arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
             opacs.append(arr)
-    cmap = "rainbow"
+    if random_colormaps:
+        cmaps = ["rainbow_r", "rainbow",
+                "coolwarm", "coolwarm_r", "RdYlBu"]
+    else:
+        cmaps = ["rainbow"]
 
     # Window setup
     width = 800
@@ -130,16 +139,16 @@ def buildRawDataset(
     pl.add_light(headlight)
     pl.window_size = [width, height]
 
-    if raw_file.endswith(".vti"):
+    if raw_file.endswith(".vtk"):
         dir = os.path.join(out_path, os.path.basename(raw_file).rsplit(".", 1)[0])
         os.makedirs(dir, exist_ok=True)
     
         mesh = pv.read(raw_file)
-        values = mesh.get_array("value").reshape(-1, 1)
+        values = mesh.get_array("volume_scalars").reshape(-1, 1)
         values_min = values.min()
         values_max = values.max()
         values = (values - values_min) / (values_max - values_min)
-        mesh.get_array("value")[:] = values.ravel()
+        mesh.get_array("volume_scalars")[:] = values.ravel()
 
         # Scale mesh to the unit cube
         xmin, xmax, ymin, ymax, zmin, zmax = mesh.bounds
@@ -147,6 +156,7 @@ def buildRawDataset(
         global_max = max(xmax, ymax, zmax)
         mesh.translate(np.array([-global_min, -global_min, -global_min]), inplace=True)
         mesh.scale(1.0/(global_max - global_min), inplace=True)
+        scalars = "volume_scalars"
         # mesh.translate(np.array([0.01,0.01,0.01]), inplace=True)
     else:
         # Parse the filename
@@ -188,6 +198,7 @@ def buildRawDataset(
         max_extent = np.max(extents)
         scale_factor = 1.0 / max_extent
         mesh.spacing = tuple(np.array(mesh.spacing) * scale_factor)
+        scalars = "value"
 
     # Get the focal point so that we can translate the mesh to the origin
     offset = list(pl.camera.focal_point)
@@ -204,15 +215,15 @@ def buildRawDataset(
     print(mesh.bounds)
 
     # Controls the camera orbit and capture frequency
-    azimuth_steps = 32
-    elevation_steps = 10
+    azimuth_steps = 32 if not random_colormaps else 16
+    elevation_steps = 10 if not random_colormaps else 5
     azimuth_range = np.linspace(0, 360, azimuth_steps, endpoint=False)
     # elevation is intentionally limited to avoid a render bug(s) that occurs when elevation is outside of [-35, 35]
     elevation_range = np.linspace(-35, 35, elevation_steps, endpoint=True)
     for i, opac in enumerate(opacs):
         train_cams = []
         test_cams = []
-        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}{'NS' if not shade else ''}TF{(i+1):02d}")
+        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}{'NS' if not shade else ''}{'CC' if random_colormaps else ''}TF{(i+1):02d}")
         if os.path.exists(opac_dir):
             shutil.rmtree(opac_dir)
         os.makedirs(opac_dir)
@@ -220,84 +231,89 @@ def buildRawDataset(
         os.makedirs(train_dir)
         test_dir = os.path.join(opac_dir, f"test")
         os.makedirs(test_dir)
-
-        start_time = time.time()
-        print("Updating the volume")
-
-        pl.add_volume(
-            mesh,
-            name="volume_actor",
-            show_scalar_bar=False,
-            scalars="value",
-            cmap=cmap,
-            opacity=opac * 255,
-            shade=shade,
-            render=False,
-        )
-        pl.view_xy(render=False)
-        print(
-            f"Time taken to update the volume: {time.time() - start_time:.2f} seconds"
-        )
-
         im_count = 0
-        start_time = time.time()
-        for elevation in elevation_range:
-            for azimuth in azimuth_range:
-                # Set new azimuth and elevation
-                camera.elevation = elevation
-                camera.azimuth = azimuth
 
-                # Produce a new render at the new camera position
-                pl.render()
+        for cmap in cmaps:
+            start_time = time.time()
+            print(f"Updating the volume to colormap {cmap}")
 
-                img = pl.screenshot(None, transparent_background=True, return_img=True)
+            pl.add_volume(
+                mesh,
+                name="volume_actor",
+                show_scalar_bar=False,
+                scalars=scalars,
+                cmap=cmap,
+                opacity=opac * 255,
+                shade=shade,
+                render=False,
+            )
+            pl.view_xy(render=False)
+            print(
+                f"Time taken to update the volume: {time.time() - start_time:.2f} seconds"
+            )
+            start_time = time.time()
+            for elevation in elevation_range:
+                for azimuth in azimuth_range:
+                    # Set new azimuth and elevation
+                    camera.elevation = elevation
+                    camera.azimuth = azimuth
 
-                # if is_image_blank_alpha(img):
-                #     print(f"SKIP HAPPENED, FIX SOMETHING")
-                #     continue
-                
-                # Save the render as a new image
-                image_name = (
-                    f"r_{(im_count // 2):04d}.png"
-                )
-                if im_count % 2 == 0:
-                    image_path = os.path.join(train_dir, image_name)
-                else:
-                    image_path = os.path.join(test_dir, image_name)
-                plt.imsave(image_path, img)
+                    # Produce a new render at the new camera position
+                    pl.render()
 
-                # Convert 4x4 VTK matrix to NumPy and invert
-                mvt_matrix = np.linalg.inv(
-                    arrayFromVTKMatrix(camera.GetModelViewTransformMatrix())
-                )
+                    img = pl.screenshot(None, transparent_background=True, return_img=True)
 
-                # Y/Z flip (likely due to coordinate system handedness)
-                mvt_matrix[:3, 1:3] *= -1
+                    # if is_image_blank_alpha(img):
+                    #     print(f"SKIP HAPPENED, FIX SOMETHING")
+                    #     continue
+                    
+                    # Save the render as a new image
+                    image_name = (
+                        f"r_{(im_count // 2):04d}.png"
+                    )
+                    if im_count % 2 == 0:
+                        if random_colormaps:
+                            im_count += 1
+                            continue
+                        image_path = os.path.join(train_dir, image_name)
+                    else:
+                        image_path = os.path.join(test_dir, image_name)
+                    plt.imsave(image_path, img)
 
-                # Extract rotation and translation
-                R = mvt_matrix[:3, :3].T  # transpose to match camera convention
-                T = mvt_matrix[:3, 3]
+                    # Convert 4x4 VTK matrix to NumPy and invert
+                    mvt_matrix = np.linalg.inv(
+                        arrayFromVTKMatrix(camera.GetModelViewTransformMatrix())
+                    )
 
-                # FOV conversions
-                FovY = np.radians(camera.view_angle)
-                FovX = focal2fov(fov2focal(FovY, height), width)
+                    # Y/Z flip (likely due to coordinate system handedness)
+                    mvt_matrix[:3, 1:3] *= -1
 
-                cam_info = CameraInfo(
-                    uid=im_count // 2,
-                    R=R,
-                    T=T,
-                    FovY=FovY,
-                    FovX=FovX,
-                    image_path=image_path.replace(opac_dir, "./", 1),
-                    image_name=image_name,
-                    width=width,
-                    height=height
-                )
-                if im_count % 2 == 0:
-                    train_cams.append(cam_info)
-                else:
-                    test_cams.append(cam_info)
-                im_count += 1
+                    # Extract rotation and translation
+                    R = mvt_matrix[:3, :3].T  # transpose to match camera convention
+                    T = mvt_matrix[:3, 3]
+
+                    # FOV conversions
+                    FovY = np.radians(camera.view_angle)
+                    FovX = focal2fov(fov2focal(FovY, height), width)
+
+                    cam_info = CameraInfo(
+                        uid=im_count // 2,
+                        R=R,
+                        T=T,
+                        FovY=FovY,
+                        FovX=FovX,
+                        image_path=image_path.replace(opac_dir, "./", 1),
+                        image_name=image_name,
+                        width=width,
+                        height=height,
+                        colormap=cmap,
+                        opac_map=i
+                    )
+                    if im_count % 2 == 0:
+                        train_cams.append(cam_info)
+                    else:
+                        test_cams.append(cam_info)
+                    im_count += 1
         with open(
             os.path.join(opac_dir, "cameras_train.json"), "w"
         ) as file:
@@ -342,5 +358,9 @@ if __name__ == "__main__":
         "--noshade",
         action="store_true"
     )
+    parser.add_argument(
+        "--randomcolormaps",
+        action="store_true"
+    )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade))
+    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps)
