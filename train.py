@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import torchvision
 from collections import defaultdict
 from random import randint
+import re
 from utils.loss_utils import ssim
 from gaussian_renderer import render_fn_dict
 import sys
@@ -34,7 +35,10 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
     Setup Gaussians
     """
     if is_scalar:
-        gaussians = ScalarGaussianModel(render_type=args.type)
+        norm_path = os.path.normpath(dataset.model_path)
+        second_last = os.path.basename(os.path.dirname(norm_path))
+        TFidx = int(re.search(r'\d+$', second_last).group()) - 1
+        gaussians = ScalarGaussianModel(render_type=args.type, TFscalar=((TFidx + 0.5) / 10))
     else:
         gaussians = GaussianModel(dataset.sh_degree, render_type=args.type) # render type check whether use pbr(neilf) or not
     scene = Scene(dataset, gaussians) # by default, randomly create 100_000 points (defined in dataset_readers:readNerfSyntheticInfo:num_pts) from the scene
@@ -117,9 +121,7 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
             Lalpha_regul = points_opacity.abs().mean()
             loss += 0.001*Lalpha_regul
             
-        
         loss.backward()
-
         with torch.no_grad():
             if pipe.save_training_vis:
                 save_training_vis(viewpoint_cam, gaussians, background, render_fn,
@@ -152,8 +154,8 @@ def training(dataset: ModelParams, opt: OptimizationParams, pipe: PipelineParams
                 if iteration % opt.opacity_reset_interval == 0 or (
                         dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
-            elif iteration%opt.densification_interval==0:# remove not rendered points after desify iters
-                gaussians.prune(1/255, scene.cameras_extent, None) 
+            # elif iteration%opt.densification_interval==0:# remove not rendered points after desify iters
+            #     gaussians.prune(0.005, scene.cameras_extent, None) 
 
             # Optimizer step
             gaussians.step()

@@ -65,7 +65,8 @@ class ScalarGaussianModel:
             self.ambient_activation = torch.sigmoid
             self.specular_factor_activation = torch.sigmoid
 
-    def __init__(self, render_type='render'):
+    def __init__(self, render_type='render', TFscalar=0.5):
+        print(TFscalar)
         self.render_type = render_type
         self.use_phong = render_type in ['phong']
         self._xyz = torch.empty(0)
@@ -84,6 +85,7 @@ class ScalarGaussianModel:
         self.spatial_lr_scale = 0
         self._scalar = torch.empty(0)
         self._scalar2 = torch.empty(0)
+        self.TFscalar = TFscalar
 
         self.setup_functions()
         self.transform = {}
@@ -361,7 +363,8 @@ class ScalarGaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-        scalars = inverse_sigmoid(0.5 + (torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") - 0.5) * 2 * 0.1)
+        scalars = inverse_sigmoid(torch.clamp(self.TFscalar + (torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") - 0.5) * 2 * 0.01, 
+                                              0.0, 1.0))
         self._scalar = nn.Parameter(scalars.clone().requires_grad_(True))
         self._scalar2 = nn.Parameter(scalars.clone().requires_grad_(True))
 
