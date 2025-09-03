@@ -42,7 +42,8 @@ class CameraInfo(NamedTuple):
     hdr: bool = False
     depth: np.array = None
     image_mask: np.array = None
-
+    colormap: str = None
+    opac_map: int = None
 
 
 class SceneInfo(NamedTuple):
@@ -344,7 +345,8 @@ def readCamerasFromJSON(path, camerasfile, white_background, extension=".png", d
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=fovy, FovX=fovx, image=image, image_mask=image_mask,
                                         image_path=image_path, depth=depth, normal=normal, image_name=image_name,
-                                        width=image.shape[1], height=image.shape[0], hdr=is_hdr))
+                                        width=image.shape[1], height=image.shape[0], hdr=is_hdr, colormap=frame.get("colormap", None),
+                                        opac_map=frame.get("opac_map", None)))
             if debug and idx >= 5:
                 break
 

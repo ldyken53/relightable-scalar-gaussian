@@ -63,27 +63,23 @@ class Camera(nn.Module):
         colors = cmap(control_points)[:, :3]
         self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
 
+        num_points = 100
+        num_maps = 10
+        opacs = []
+        indices = np.linspace(0, 1, num_points)
+        step_size = 1.0 / num_maps
+        eps = 1e-4
+        for step in range(num_maps):
+            center = step * step_size + step_size / 2 + eps
+            arr = np.zeros(num_points, dtype=np.float32)
+            
+            for i, x in enumerate(indices):
+                dist = abs(x - center)
+                arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
+            opacs.append(arr)
         if opac_map is not None:
-            self.opac_map = opac_map
+            self.opac_map = torch.tensor(opacs[opac_map].reshape(-1, 1), dtype=torch.float32).to("cuda")
         else:
-            # indices = np.arange(100)
-            # bins = np.linspace(0, 100, 3+1).astype(int)
-            # opacs = [((indices >= start - 1) & (indices < end + 1)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]
-            # opacs = [opac * 0.5 for opac in opacs]
-            # self.opac_map = torch.tensor(opacs[1].reshape(-1, 1), dtype=torch.float32).to("cuda")
-            opacs = []
-            indices = np.linspace(0, 1, 100)
-            step_size = 1.0 / 3
-            eps = 1e-4
-            for step in range(3):
-                # make slightly off center so never have neighboring points with same value
-                center = step * step_size + step_size / 2 + eps
-                arr = np.zeros(100, dtype=np.float32)
-                
-                for i, x in enumerate(indices):
-                    dist = abs(x - center)
-                    arr[i] = max(0, 1 - (dist * 2 * 1 * (3 / 2)))
-                opacs.append(arr)
             self.opac_map = torch.tensor(opacs[1].reshape(-1, 1), dtype=torch.float32).to("cuda")
 
         self.zfar = 100.0
