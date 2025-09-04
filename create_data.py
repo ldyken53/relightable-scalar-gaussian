@@ -19,6 +19,7 @@ import time
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+from plyfile import PlyData, PlyElement
 
 from utils.graphics_utils import focal2fov, fov2focal
 
@@ -93,13 +94,57 @@ def is_image_blank_alpha(image: np.ndarray,
     return lit < min_fraction * total
 
 
+def storePly(path, xyz, values):
+    values = values.reshape(-1, 1)
+    if xyz.shape[0] != values.shape[0]:
+        raise ValueError(
+            f"Mismatch in number of points: mesh has {xyz.shape[0]} points, "
+            f"but values has {values.shape[0]} entries."
+        )
+    # Define the dtype for the structured array
+    dtype = [
+        ("x", "f4"),
+        ("y", "f4"),
+        ("z", "f4"),
+        ("value", "f4"),
+    ]
+
+    elements = np.empty(xyz.shape[0], dtype=dtype)
+    attributes = np.concatenate((xyz, values), axis=1)
+    elements[:] = list(map(tuple, attributes))
+
+    # Create the PlyData object and write to file
+    vertex_element = PlyElement.describe(elements, "vertex")
+    ply_data = PlyData([vertex_element])
+    ply_data.write(path)
+
+
+def random_dropout_exact(mesh, num_particles_to_keep, scalars):
+    num_points = mesh.n_points
+
+    if num_particles_to_keep > num_points:
+        num_particles_to_keep = num_points
+
+    # Randomly select indices without replacement
+    selected_indices = np.random.choice(
+        num_points, size=num_particles_to_keep, replace=False
+    )
+
+    # Extract selected points and associated values
+    new_points = mesh.points[selected_indices]
+    new_values = mesh.point_data[scalars][selected_indices]
+
+    return new_points, new_values
+
+
 def buildRawDataset(
     out_path,
     raw_file,
     num_maps,
     triangular,
     shade,
-    random_colormaps
+    random_colormaps,
+    dropout
 ):
     print(shade)
     start_time = time.time()
@@ -129,7 +174,7 @@ def buildRawDataset(
                 "coolwarm", "coolwarm_r", "RdYlBu"]
     else:
         cmaps = ["rainbow"]
-
+        
     # Window setup
     width = 800
     height = 800
@@ -189,7 +234,7 @@ def buildRawDataset(
             raise ValueError("Data size does not match the specified dimensions.")
 
         mesh = pv.ImageData(dimensions=dimensions)
-        mesh.point_data["value"] = values
+        mesh.point_data["value"] = (values - values.min()) / (values.max() - values.min())
 
         # Point scaling
         points_min = np.array(mesh.origin)
@@ -213,6 +258,24 @@ def buildRawDataset(
     camera = pl.camera
     camera.clipping_range = (0.001, 1000.0)
     print(mesh.bounds)
+
+    if dropout:
+        start_time = time.time()
+        points_dropout, values_dropout = random_dropout_exact(
+            mesh,
+            500000,
+            scalars
+        )
+        print(f"Time taken to perform dropout: {time.time() - start_time:.2f} seconds")
+
+        start_time = time.time()
+        storePly(
+            os.path.join(dir, "points3d.ply"),
+            points_dropout,
+            values_dropout,
+        )
+        print(f"Time taken to store points3d.ply: {time.time() - start_time:.2f} seconds")
+        return
 
     # Controls the camera orbit and capture frequency
     azimuth_steps = 32 if not random_colormaps else 16
@@ -362,5 +425,9 @@ if __name__ == "__main__":
         "--randomcolormaps",
         action="store_true"
     )
+    parser.add_argument(
+        "--dropout",
+        action="store_true"
+    )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps)
+    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps, args.dropout)
