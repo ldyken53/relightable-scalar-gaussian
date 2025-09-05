@@ -12,6 +12,7 @@ from utils.image_utils import psnr
 from utils.graphics_utils import fibonacci_sphere_sampling
 from .diff_rasterization import GaussianRasterizationSettings, GaussianRasterizer, RenderEquation, \
     RenderEquation_complex
+from utils.general_utils import inverse_sigmoid
 
 
 class LUTColour(torch.autograd.Function):
@@ -137,7 +138,10 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
     means3D = pc.get_xyz
     means2D = screenspace_points
-    opacity = pc.get_opacity
+    pc_opacity = pc.get_opacity
+    scalar_opacity = scalar2opac(pc.get_scalar2, camera.opac_map)
+    opacity = pc_opacity * scalar_opacity
+    # pc._opacity = inverse_sigmoid(opacity.detach().clone())
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
@@ -157,6 +161,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
         device="cuda", dtype=means3D.dtype)
 
     scalar_color = scalar2rgb(pc.get_scalar2, camera.colormap)
+ 
     diffuse_factor = pc.get_diffuse_factor
     shininess = pc.get_shininess
     ambient_factor = pc.get_ambient_factor
