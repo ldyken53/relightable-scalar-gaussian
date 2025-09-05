@@ -19,7 +19,9 @@ import time
 import json
 import numpy as np
 import matplotlib.pyplot as plt
+import random
 from plyfile import PlyData, PlyElement
+import torch
 
 from utils.graphics_utils import focal2fov, fov2focal
 
@@ -122,17 +124,30 @@ def storePly(path, xyz, values):
 def random_dropout_exact(mesh, num_particles_to_keep, scalars):
     num_points = mesh.n_points
 
-    if num_particles_to_keep > num_points:
-        num_particles_to_keep = num_points
+    # if num_particles_to_keep > num_points:
+    #     num_particles_to_keep = num_points
 
-    # Randomly select indices without replacement
-    selected_indices = np.random.choice(
+    # # Randomly select indices without replacement
+    idx = np.random.choice(
         num_points, size=num_particles_to_keep, replace=False
     )
 
-    # Extract selected points and associated values
-    new_points = mesh.points[selected_indices]
-    new_values = mesh.point_data[scalars][selected_indices]
+    # # Extract selected points and associated values
+    # new_points = mesh.points[selected_indices]
+    # new_values = mesh.point_data[scalars][selected_indices]
+
+    # idx = torch.randint(mesh.n_points, num_particles_to_keep)
+    nx, ny, nz = mesh.dimensions
+    ox, oy, oz = mesh.origin
+    sx, sy, sz = mesh.spacing
+    nxny = nx * ny
+    k, r = np.divmod(idx, nxny)
+    j, i = np.divmod(r, nx)
+    x = ox + i * sx
+    y = oy + j * sy
+    z = oz + k * sz
+    new_points = np.stack((x, y, z), axis=-1)
+    new_values = mesh.point_data[scalars][idx]
 
     return new_points, new_values
 
@@ -173,7 +188,7 @@ def buildRawDataset(
         cmaps = ["rainbow_r", "rainbow",
                 "coolwarm", "coolwarm_r", "RdYlBu"]
     else:
-        cmaps = ["rainbow"]
+        cmaps = ["viridis"]
         
     # Window setup
     width = 800
@@ -263,7 +278,7 @@ def buildRawDataset(
         start_time = time.time()
         points_dropout, values_dropout = random_dropout_exact(
             mesh,
-            500000,
+            300000,
             scalars
         )
         print(f"Time taken to perform dropout: {time.time() - start_time:.2f} seconds")
