@@ -11,6 +11,7 @@ from utils.sh_utils import eval_sh
 from utils.loss_utils import ssim
 from utils.image_utils import psnr
 from .diff_rasterization import GaussianRasterizationSettings, GaussianRasterizer 
+from utils.general_utils import inverse_sigmoid
 
 class LUTColour(torch.autograd.Function):
     @staticmethod
@@ -71,7 +72,7 @@ class LUTOpacity(torch.autograd.Function):
 
         # save what we need for backward
         ctx.save_for_backward(c0, c1)
-        return opacity                                                # (N,1)
+        return opacity                                  # (N,1)
 
     @staticmethod
     def backward(ctx, grad_opac):
@@ -130,8 +131,13 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
     means3D = pc.get_xyz
     means2D = screenspace_points #* this is zero tensor now, will be updated by rasterizer
-    opacity = pc.get_opacity
-    # opacity = scalar2opac(pc.get_scalar, camera.opac_map)
+    pc_opacity = pc.get_opacity
+    opac_map = camera.opac_map
+    # opac_map = (camera.opac_map > 1e-4).float()
+    scalar_opacity = scalar2opac(pc.get_scalar2, opac_map)
+    opacity = scalar_opacity
+    # opacity = scalar_opacity
+    # pc._opacity = inverse_sigmoid(opacity.detach().clone())
 
     # If precomputed 3d covariance is provided, use it. If not, then it will be computed from
     # scaling / rotation by the rasterizer.
