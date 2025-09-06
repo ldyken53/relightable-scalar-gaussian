@@ -167,7 +167,15 @@ def fetchPly(path):
         print("random init normal")
         normals = np.random.random(normals.shape)
 
-    return BasicPointCloud(points=positions, colors=colors, normals=normals)
+    return BasicPointCloud(points=positions, colors=colors, values=None, normals=normals)
+
+def fetchScalarPly(path):
+    plydata = PlyData.read(path)
+    vertices = plydata["vertex"]
+    positions = np.vstack([vertices["x"], vertices["y"], vertices["z"]]).T
+    values = np.vstack(vertices["value"]).T
+    normals = np.random.random(positions.shape)
+    return BasicPointCloud(points=positions, colors=None, values=values, normals=normals)
 
 
 def storePly(path, xyz, rgb, normals=None):
@@ -397,11 +405,7 @@ def readRawSetInfo(path, white_background, eval, extension=".png", debug=False):
         normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
 
         storePly(ply_path, xyz, SH2RGB(shs) * 255, normals)
-
-    try:
-        pcd = fetchPly(ply_path)
-    except:
-        pcd = None
+    pcd = fetchScalarPly(ply_path)
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
