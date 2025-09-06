@@ -44,7 +44,7 @@ class Camera(nn.Module):
         if image_mask is not None:
             self.image_mask = image_mask
         else:
-            self.image_mask = torch.ones((3, self.image_height, self.image_width), dtype=torch.float32, device=data_device)
+            self.image_mask = torch.ones((1, self.image_height, self.image_width), dtype=torch.float32, device=data_device)
 
         if colormap is None:
             colormap = "rainbow"
