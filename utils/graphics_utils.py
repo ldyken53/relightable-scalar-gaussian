@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from typing import NamedTuple
 from .sh_utils import rotation_between_z
+from typing import Union
 
 
 def fibonacci_sphere_sampling(normals, sample_num, random_rotate=True):
@@ -110,7 +111,8 @@ def rotation_between_vectors_np(vec1, vec2):
 
 class BasicPointCloud(NamedTuple):
     points: np.array
-    colors: np.array
+    colors: Union[np.array, None]
+    values: Union[np.array, None]
     normals: np.array
 
 
