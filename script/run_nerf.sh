@@ -21,7 +21,9 @@ python train.py --eval \
 --lambda_opacity 0.1 \
 --densification_interval 500 \
 --densify_grad_normal_threshold 0.000004 \
---save_training_vis
+--save_training_vis \
+--densify_until_iter 10000 \
+--opacity_reset_interval 3000
 
 # densify more 2000 iterations for better normal 
 python train.py --eval \
@@ -32,6 +34,7 @@ python train.py --eval \
 --lambda_normal_render_depth 0.01 \
 --lambda_opacity 0.1 \
 --lambda_phong 1.0 \
+--densify_grad_normal_threshold 0.0002 \
 --densify_until_iter 32000 \
 --lambda_render 0.0 \
 --use_global_shs \
