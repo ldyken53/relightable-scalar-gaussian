@@ -128,26 +128,26 @@ def random_dropout_exact(mesh, num_particles_to_keep, scalars):
     #     num_particles_to_keep = num_points
 
     # # Randomly select indices without replacement
-    idx = np.random.choice(
+    selected_indices = np.random.choice(
         num_points, size=num_particles_to_keep, replace=False
     )
 
-    # # Extract selected points and associated values
-    # new_points = mesh.points[selected_indices]
-    # new_values = mesh.point_data[scalars][selected_indices]
+    # Extract selected points and associated values
+    new_points = mesh.points[selected_indices]
+    new_values = mesh.point_data[scalars][selected_indices]
 
     # idx = torch.randint(mesh.n_points, num_particles_to_keep)
-    nx, ny, nz = mesh.dimensions
-    ox, oy, oz = mesh.origin
-    sx, sy, sz = mesh.spacing
-    nxny = nx * ny
-    k, r = np.divmod(idx, nxny)
-    j, i = np.divmod(r, nx)
-    x = ox + i * sx
-    y = oy + j * sy
-    z = oz + k * sz
-    new_points = np.stack((x, y, z), axis=-1)
-    new_values = mesh.point_data[scalars][idx]
+    # nx, ny, nz = mesh.dimensions
+    # ox, oy, oz = mesh.origin
+    # sx, sy, sz = mesh.spacing
+    # nxny = nx * ny
+    # k, r = np.divmod(idx, nxny)
+    # j, i = np.divmod(r, nx)
+    # x = ox + i * sx
+    # y = oy + j * sy
+    # z = oz + k * sz
+    # new_points = np.stack((x, y, z), axis=-1)
+    # new_values = mesh.point_data[scalars][idx]
 
     return new_points, new_values
 
@@ -159,9 +159,14 @@ def buildRawDataset(
     triangular,
     shade,
     random_colormaps,
-    dropout
+    dropout,
+    narrow,
+    broad
 ):
-    print(shade)
+    if narrow:
+        num_maps = num_maps * 2
+    if broad:
+        num_maps = num_maps // 2
     start_time = time.time()
     num_points = 100
     slope = 1
@@ -199,16 +204,16 @@ def buildRawDataset(
     pl.add_light(headlight)
     pl.window_size = [width, height]
 
-    if raw_file.endswith(".vtk"):
+    if raw_file.endswith(".vtk") or raw_file.endswith(".vtu"):
         dir = os.path.join(out_path, os.path.basename(raw_file).rsplit(".", 1)[0])
         os.makedirs(dir, exist_ok=True)
     
         mesh = pv.read(raw_file)
-        values = mesh.get_array("volume_scalars").reshape(-1, 1)
+        values = mesh.get_array("value").reshape(-1, 1)
         values_min = values.min()
         values_max = values.max()
         values = (values - values_min) / (values_max - values_min)
-        mesh.get_array("volume_scalars")[:] = values.ravel()
+        mesh.get_array("value")[:] = values.ravel()
 
         # Scale mesh to the unit cube
         xmin, xmax, ymin, ymax, zmin, zmax = mesh.bounds
@@ -216,7 +221,7 @@ def buildRawDataset(
         global_max = max(xmax, ymax, zmax)
         mesh.translate(np.array([-global_min, -global_min, -global_min]), inplace=True)
         mesh.scale(1.0/(global_max - global_min), inplace=True)
-        scalars = "volume_scalars"
+        scalars = "value"
         # mesh.translate(np.array([0.01,0.01,0.01]), inplace=True)
     else:
         # Parse the filename
@@ -278,7 +283,7 @@ def buildRawDataset(
         start_time = time.time()
         points_dropout, values_dropout = random_dropout_exact(
             mesh,
-            300000,
+            500000,
             scalars
         )
         print(f"Time taken to perform dropout: {time.time() - start_time:.2f} seconds")
@@ -293,15 +298,15 @@ def buildRawDataset(
         return
 
     # Controls the camera orbit and capture frequency
-    azimuth_steps = 32 if not random_colormaps else 16
-    elevation_steps = 10 if not random_colormaps else 5
+    azimuth_steps = 32 if not random_colormaps and not narrow else 16
+    elevation_steps = 10 if not random_colormaps and not narrow else 5
     azimuth_range = np.linspace(0, 360, azimuth_steps, endpoint=False)
     # elevation is intentionally limited to avoid a render bug(s) that occurs when elevation is outside of [-35, 35]
     elevation_range = np.linspace(-35, 35, elevation_steps, endpoint=True)
     for i, opac in enumerate(opacs):
         train_cams = []
         test_cams = []
-        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}{'NS' if not shade else ''}{'CC' if random_colormaps else ''}TF{(i+1):02d}")
+        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}{'NS' if not shade else ''}{'CC' if random_colormaps else ''}{'NA' if narrow else ''}{'B' if broad else ''}TF{(i+1):02d}")
         if os.path.exists(opac_dir):
             shutil.rmtree(opac_dir)
         os.makedirs(opac_dir)
@@ -324,6 +329,7 @@ def buildRawDataset(
                 opacity=opac * 255,
                 shade=shade,
                 render=False,
+                # opacity_unit_distance=(1.0 / 256.0)
             )
             pl.view_xy(render=False)
             print(
@@ -350,7 +356,7 @@ def buildRawDataset(
                         f"r_{(im_count // 2):04d}.png"
                     )
                     if im_count % 2 == 0:
-                        if random_colormaps:
+                        if random_colormaps or narrow or broad:
                             im_count += 1
                             continue
                         image_path = os.path.join(train_dir, image_name)
@@ -444,5 +450,13 @@ if __name__ == "__main__":
         "--dropout",
         action="store_true"
     )
+    parser.add_argument(
+        "--narrow",
+        action="store_true"
+    )
+    parser.add_argument(
+        "--broad",
+        action="store_true"
+    )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps, args.dropout)
+    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps, args.dropout, args.narrow, args.broad)
