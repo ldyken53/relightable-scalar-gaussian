@@ -852,7 +852,7 @@ class GUI:
                 
                 with dpg.group(horizontal=True):
                     dpg.add_text("Specular")
-                    dpg.add_slider_float(label="", tag="_slider_specular_multi", indent=self.widget_indent, default_value=0, min_value=0, max_value=5, callback=callback_light_multi)
+                    dpg.add_slider_float(label="", tag="_slider_specular_multi", indent=self.widget_indent, default_value=0.2, min_value=0, max_value=5, callback=callback_light_multi)
                 
                 with dpg.group(horizontal=True):
                     dpg.add_text("Shininess")

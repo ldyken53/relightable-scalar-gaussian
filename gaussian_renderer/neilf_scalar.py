@@ -244,6 +244,8 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
 
     phong = rendered_phong
     rendered_phong = phong + (1 - rendered_opacity) * bg_color[:, None, None]
+    # mask = rendered_opacity[0] < 0.5  # Squeeze to (800,800)
+    # rendered_phong[:, mask] = bg_color[:, None]
 
     val_gamma = 0
     if gamma_transform is not None:
