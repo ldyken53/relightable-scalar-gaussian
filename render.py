@@ -5,6 +5,7 @@ ic.configureOutput(includeContext=True) # type: ignore
 
 import json
 import os
+import shutil
 import cv2
 from gaussian_renderer import render_fn_dict
 import numpy as np
@@ -16,7 +17,7 @@ from arguments import ModelParams, PipelineParams
 from scene.cameras import Camera
 from utils.graphics_utils import focal2fov, fov2focal
 from utils.system_utils import searchForMaxIteration
-from torchvision.utils import save_image
+from torchvision.utils import save_image, make_grid
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
@@ -39,15 +40,20 @@ def load_json_config(json_file):
     return load_dict
 
 def load_ckpts_paths(source_dir):
+    TFs_folders = sorted(glob.glob(f"{source_dir}/TF*"))
+    TFs_names = sorted([os.path.basename(folder) for folder in TFs_folders])
+
     ckpts_transforms = {}
-    one_TF_json = {'path': None, 'palette':None, 'transform': [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
-    ckpt_dir = os.path.join(source_dir, "point_cloud")
-    max_iters = searchForMaxIteration(ckpt_dir)
-    ckpt_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "point_cloud.ply")
-    palette_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "palette_colors_chkpnt.pth")
-    one_TF_json['path'] = ckpt_path
-    one_TF_json['palette'] = palette_path
-    ckpts_transforms['0'] = one_TF_json
+    for idx, TF_folder in enumerate(TFs_folders):
+        one_TF_json = {'path': None, 'palette':None, 'transform': [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
+        ckpt_dir = os.path.join(TF_folder,"neilf","point_cloud")
+        max_iters = searchForMaxIteration(ckpt_dir)
+        ckpt_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "point_cloud.ply")
+        palette_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "palette_colors_chkpnt.pth")
+        one_TF_json['path'] = ckpt_path
+        one_TF_json['palette'] = palette_path
+        ckpts_transforms[TFs_names[idx]] = one_TF_json
+
     return ckpts_transforms
 
 def scene_composition(scene_dict: dict, dataset: ModelParams, is_scalar = False):
@@ -138,31 +144,51 @@ if __name__ == '__main__':
     
 
     # load configs
-    view_config_file = f"{args.view_config}/cameras_test.json"
-    final_folder = os.path.basename(os.path.normpath(args.view_config))
-    TFidx = int(re.search(r'\d+$', final_folder).group()) - 1
-    print(f"TFidx is: {TFidx}")
+    tf_folders = glob.glob(os.path.join(args.view_config, "NATF*"))
+    tf_folders = [folder for folder in tf_folders if os.path.isdir(folder)]
+    view_dict = []
+
+    # Go through each TF folder and load cameras_test.json
+    for tf_folder in tf_folders:
+        tf_folder_name = os.path.basename(tf_folder)
+        cameras_file = os.path.join(tf_folder, "cameras_test.json")
+        if os.path.exists(cameras_file):
+            cameras_data = load_json_config(cameras_file)
+            # Extend the main array with cameras from this folder
+            if isinstance(cameras_data, list):
+                for camera in cameras_data:
+                    if 'image_path' in camera:
+                        camera['image_path'] = os.path.join(tf_folder_name, camera['image_path'])
+                view_dict.extend(cameras_data)
+            else:
+                # If it's a dict with a cameras key or similar, adjust accordingly
+                print(f"Warning: {cameras_file} is not a list format")
+        else:
+            print(f"Warning: {cameras_file} not found")
+    
+    light_transform = LearningLightTransform(theta=180, phi=0)
+
     scene_dict = load_ckpts_paths(args.source_dir)
     TFs_names = list(scene_dict.keys())
-    TFs_nums = len(TFs_names)
-
-    view_dict = load_json_config(view_config_file)
-    
-    # load palette
     palette_color_transforms = []
     opacity_transforms = []
-
-    palette_color_transform = LearningPaletteColor()
-    palette_color_transform.create_from_ckpt(f"{scene_dict['0']['palette']}")
-    palette_color_transforms.append(palette_color_transform)
-    # ic(palette_color_transform.palette_color)
-    
-    opacity_transform = LearningOpacityTransform()
-    opacity_transforms.append(opacity_transform)
+    TFcount=0
         
-    light_transform = LearningLightTransform(theta=180, phi=0)
+    for TFs_name in TFs_names:
+        
+        palette_color_transform = LearningPaletteColor()
+        palette_color_transform.create_from_ckpt(f"{scene_dict[TFs_name]['palette']}")
+        palette_color_transforms.append(palette_color_transform)
+        # ic(TFcount)
+
+        opacity_factor = 1.0
+        opacity_transform = LearningOpacityTransform(opacity_factor=opacity_factor)
+        opacity_transforms.append(opacity_transform)
+        TFcount+=1
     # load gaussians
     gaussians_composite = scene_composition(scene_dict, dataset, args.is_scalar)
+    if not args.is_scalar:
+        gaussians_composite.my_save_ply(args.source_dir, quantised=True, half_float=True)
 
     # rendering
     capture_dir = args.output
@@ -170,8 +196,9 @@ if __name__ == '__main__':
     capture_list = [str.strip() for str in args.capture_list.split(",")]
     for capture_type in capture_list:
         capture_type_dir = os.path.join(capture_dir, capture_type)
+        if os.path.exists(capture_type_dir):
+            shutil.rmtree(capture_type_dir)
         os.makedirs(capture_type_dir, exist_ok=True)
-    
 
     bg = args.background_color
     if bg is None:
@@ -187,11 +214,27 @@ if __name__ == '__main__':
         "dict_params": {
             "sample_num": args.sample_num,
             "palette_colors": palette_color_transforms,
-            "light_transform": light_transform
+            "light_transform": light_transform,
+            "opacity_factors": opacity_transforms
         }
     }
     if not args.useHeadlight:
         render_kwargs["dict_params"]["light_transform"].useHeadLight = False
+
+    num_points = 100
+    num_maps = args.TFnums
+    opacs = []
+    indices = np.linspace(0, 1, num_points)
+    step_size = 1.0 / num_maps
+    eps = 1e-4
+    for step in range(num_maps):
+        center = step * step_size + step_size / 2 + eps
+        arr = np.zeros(num_points, dtype=np.float32)
+        
+        for i, x in enumerate(indices):
+            dist = abs(x - center)
+            arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
+        opacs.append(arr)
 
     H = 800
     W = 800
@@ -224,21 +267,35 @@ if __name__ == '__main__':
         fovy = cam_info["FovY"]
         custom_cam = Camera(colmap_id=0, R=R, T=T,
                             FoVx=fovx, FoVy=fovy, fx=None, fy=None, cx=None, cy=None,
-                            image=torch.zeros(3, H, W), image_name=None, uid=0, colormap=cam_info.get("colormap"))
-        if not args.is_scalar and cam_info.get("colormap"):
+                            image=torch.zeros(3, H, W), image_name=None, uid=0, colormap=cam_info.get("colormap"),
+                            opac_map=torch.tensor(opacs[cam_info.get("opac_map")].reshape(-1, 1), dtype=torch.float32).to("cuda"))
+        if not args.is_scalar:
             cmap = plt.cm.get_cmap(cam_info["colormap"])
-            # Calculate the interval for this TF
-            interval_start = TFidx / args.TFnums
-            interval_end = (TFidx + 1) / args.TFnums
-            midpoint = (interval_start + interval_end) / 2.0
-            # Get the color from the colormap at the midpoint
-            rgba_color = cmap(midpoint)  # Returns (r, g, b, a) in [0, 1]
-            rgb_color = rgba_color[:3]  # Take only RGB, ignore alpha
-            # Convert to tensor and assign to palette color
-            with torch.no_grad():
-                render_kwargs["dict_params"]["palette_colors"][0].palette_color = torch.tensor(
-                    rgb_color, dtype=torch.float32, device="cuda"
-                )
+            omap = opacs[cam_info["opac_map"]]
+            for i in range(len(TFs_names)):
+                # Calculate the interval for this TF
+                interval_start = i / 10
+                interval_end = (i + 1) / 10
+                midpoint = (interval_start + interval_end) / 2.0
+                # Get the color from the colormap at the midpoint
+                rgba_color = cmap(midpoint)  # Returns (r, g, b, a) in [0, 1]
+                rgb_color = rgba_color[:3]  # Take only RGB, ignore alpha
+
+                omap_float_index = midpoint * (len(omap) - 1)  # Map [0,1] to [0,99] as float
+                omap_index_low = int(omap_float_index)
+                omap_index_high = min(omap_index_low + 1, len(omap) - 1)
+                
+                # Linear interpolation between the two nearest points
+                weight = omap_float_index - omap_index_low
+                opac = omap[omap_index_low] * (1 - weight) + omap[omap_index_high] * weight
+                with torch.no_grad():
+                    if args.TFnums != 10:
+                        render_kwargs["dict_params"]["palette_colors"][i].palette_color = torch.tensor(
+                            rgb_color, dtype=torch.float32, device="cuda"
+                        )
+                    render_kwargs["dict_params"]["opacity_factors"][i].opacity_factor = torch.tensor(
+                        opac, dtype=torch.float32, device="cuda"
+                    )
       
         
         if light_angle is not None:
@@ -258,8 +315,10 @@ if __name__ == '__main__':
                     render_pkg[capture_type] = render_pkg[capture_type] + (1 - render_pkg['opacity']) * bg
                 elif capture_type in ["base_color", "roughness", "metallic", "visibility"]:
                     render_pkg[capture_type] = render_pkg[capture_type] + (1 - render_pkg['opacity']) * bg
-            
-                save_image(render_pkg[capture_type], f"{capture_dir}/{capture_type}/frame_{int(idx):04d}.png")
+                opac_subfolder = os.path.join(capture_dir, capture_type, f"opac_{cam_info['opac_map']}")
+                os.makedirs(opac_subfolder, exist_ok=True)
+                numeric_part = os.path.basename(cam_info['image_path'])[2:6]
+                save_image(render_pkg[capture_type], f"{opac_subfolder}/frame_{int(numeric_part):04d}.png")
         toc = time_ns()
         time_log.append((toc - tic)/1e9)
     time_log = np.array(time_log)
@@ -267,37 +326,70 @@ if __name__ == '__main__':
     print(f"FPS: {1/time_log.mean()}")
     
     if (args.evaluation and not args.EvalTime):
-        GTImgPaths = sorted(glob.glob(f"{args.view_config}/test/*.png"))
-        evalImgPaths = sorted(glob.glob(f"{capture_dir}/phong/*.png"))
         psnr_test = 0
         psnr2_test = 0
         lpips_test = 0
         ssim_test = 0
-        
-        for idx, evalImgPath in enumerate(evalImgPaths):
+        opac_psnrs = [0 for i in range(args.TFnums)]
+        opac_counts = [0 for i in range(args.TFnums)]
+
+        for idx, cam_info in enumerate(view_dict):
+            # Use the same index to match GT and eval images
+            opac_subfolder = os.path.join(capture_dir, capture_type, f"opac_{cam_info['opac_map']}")
+            os.makedirs(opac_subfolder, exist_ok=True)
+            numeric_part = os.path.basename(cam_info['image_path'])[2:6]
+            evalImgPath = f"{opac_subfolder}/frame_{int(numeric_part):04d}.png"
+            
+            GTImgPath = os.path.join(args.view_config, cam_info['image_path'])
+            
+            if not os.path.exists(GTImgPath) or not os.path.exists(evalImgPath):
+                print(f"Skipping index {idx}: missing GT or eval image")
+                continue
+                
             evalImg = cv2.imread(evalImgPath) 
-            GTImg = cv2.imread(GTImgPaths[idx], cv2.IMREAD_UNCHANGED) 
+            GTImg = cv2.imread(GTImgPath, cv2.IMREAD_UNCHANGED) 
 
             if GTImg.shape[2] == 4:
                 alpha = GTImg[:, :, 3] / 255.0  
-                white_bg = np.zeros_like(GTImg[:, :, :3]) * 255  
-                GTImg = (GTImg[:, :, :3] * alpha[:, :, None] + white_bg * (1 - alpha[:, :, None])).astype(np.uint8)
+                alpha_mask = alpha >= 0.9
+                if dataset.white_background:
+                    result = np.ones_like(GTImg[:, :, :3]) * 255
+                else:
+                    # white_bg = np.zeros_like(GTImg[:, :, :3]) * 255
+    
+                    result = np.zeros_like(GTImg[:, :, :3])
+                    
+                # GTImg = (GTImg[:, :, :3] * alpha[:, :, None] + white_bg * (1 - alpha[:, :, None])).astype(np.uint8)
+                result[alpha_mask] = GTImg[:, :, :3][alpha_mask]
+                GTImg = result.astype(np.uint8)
+
             else:
                 GTImg = GTImg[:, :, :3]
             GTtensor = numpy_to_tensor(GTImg)
             evaltensor = numpy_to_tensor(evalImg)
-            psnr_test += psnr(GTtensor, evaltensor).mean().double()
+            # psnr_test += psnr(GTtensor, evaltensor).mean().double()
             ssim_test += ssim(GTtensor, evaltensor).mean().double()
-            psnr2_test += cv2.PSNR(GTImg, evalImg)
             # lpips_test += lpips(GTtensor, evaltensor, net_type='vgg').mean().double()
-            diff = cv2.absdiff(GTImg, evalImg)
-            cv2.imwrite(f"{capture_dir}/diff{idx}.png", diff)
-            # print(f"{idx}")
-        psnr_test /= len(evalImgPaths)
-        lpips_test /= len(evalImgPaths)
-        ssim_test /= len(evalImgPaths)
-        psnr2_test /= len(evalImgPaths)
+            psnr = cv2.PSNR(GTImg, evalImg)
+            psnr2_test += psnr
+            opac_psnrs[cam_info['opac_map']] += psnr
+            opac_counts[cam_info['opac_map']] += 1
+            color_diff = np.abs(GTImg.astype(np.float32) - evalImg.astype(np.float32))
+            diff = np.mean(color_diff, axis=2) / 255.0
+            cdiff = plt.cm.get_cmap("viridis")(diff)
+            diff_colored_bgr = (cdiff[:, :, [2, 1, 0]] * 255).astype(np.uint8)
+            cv2.imwrite(f"{opac_subfolder}/diff{os.path.basename(numeric_part)}.png", diff_colored_bgr)
+            grid = torch.stack([GTtensor, evaltensor], dim=0)
+            grid = make_grid(grid, nrow=4)
+            save_image(grid, f"{opac_subfolder}/a{os.path.basename(numeric_part)}.png")
+            cv2.imwrite(f"{opac_subfolder}/GT{os.path.basename(numeric_part)}.png", GTImg)
+        psnr_test /= len(view_dict)
+        lpips_test /= len(view_dict)
+        ssim_test /= len(view_dict)
+        psnr2_test /= len(view_dict)
         print(f"Tensor PSNR: {psnr_test}, LPIPS: {lpips_test}, SSIM: {ssim_test}, PSNR: {psnr2_test}")
+        opac_psnrs = [opac_psnrs[i] / opac_counts[i] for i in range(args.TFnums)]
+        print(f"PSNR per TF: {[f'{psnr:.2f}' for psnr in opac_psnrs]}")
 
 
     # output as video
