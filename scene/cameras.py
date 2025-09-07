@@ -68,7 +68,9 @@ class Camera(nn.Module):
                 dist = abs(x - center)
                 arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
             opacs.append(arr)
-        if opac_map is not None:
+        if torch.is_tensor(opac_map):
+            self.opac_map = opac_map
+        elif opac_map is not None:
             self.opac_map = torch.tensor(opacs[opac_map].reshape(-1, 1), dtype=torch.float32).to("cuda")
         else:
             self.opac_map = torch.tensor(opacs[1].reshape(-1, 1), dtype=torch.float32).to("cuda")

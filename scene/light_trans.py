@@ -8,7 +8,7 @@ class LearningLightTransform:
     def __init__(self, theta=0, phi=0, useHeadLight=True):
         self.theta = theta
         self.phi = phi
-        self.specular_multi = 0
+        self.specular_multi = 0.2
         self.specular_offset = 0
         self.light_intensity_multi = 1
         self.light_intensity_offset = 0
@@ -22,7 +22,7 @@ class LearningLightTransform:
         with torch.no_grad():
             self.theta = nn.Parameter(torch.ones(1).float().cuda()).requires_grad_(True)
             self.phi = nn.Parameter(torch.ones(1).float().cuda()).requires_grad_(True)
-            self.specular_multi = nn.Parameter(torch.zeros(1).float().cuda()).requires_grad_(True)
+            self.specular_multi = nn.Parameter(torch.ones(1).float().cuda()).requires_grad_(True)
             self.specular_offset = nn.Parameter(torch.zeros(1).float().cuda()).requires_grad_(True)
             self.light_intensity_multi = nn.Parameter(torch.ones(1).float().cuda()).requires_grad_(True)
             self.light_intensity_offset = nn.Parameter(torch.zeros(1).float().cuda()).requires_grad_(True)
