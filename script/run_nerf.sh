@@ -5,7 +5,7 @@ set -o nounset # Trigger error when expanding unset variables
 root_dir=$1
 exp_name=$2
 echo "Dataset root dir: ${root_dir}"
-list=$(basename -a $root_dir/*/)
+list=$(basename -a $root_dir/TF*/)
 echo "TFs list: " $list
 
 # list="TF5"

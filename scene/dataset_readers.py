@@ -173,6 +173,7 @@ def fetchScalarPly(path):
     plydata = PlyData.read(path)
     vertices = plydata["vertex"]
     positions = np.vstack([vertices["x"], vertices["y"], vertices["z"]]).T
+    # positions = np.vstack([vertices["x"], vertices["y"], vertices["z"] + 3]).T
     values = np.vstack(vertices["value"]).T
     normals = np.random.random(positions.shape)
     return BasicPointCloud(points=positions, colors=None, values=values, normals=normals)
@@ -446,7 +447,6 @@ def readRawInfo(path, white_background, eval, extension=".png", debug=False):
     normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
 
     storePly(ply_path, xyz, SH2RGB(shs) * 255, normals)
-
     try:
         pcd = fetchPly(ply_path)
     except:
