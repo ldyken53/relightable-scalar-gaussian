@@ -365,7 +365,13 @@ class ScalarGaussianModel:
 
         # scalars = inverse_sigmoid(torch.clamp(self.TFscalar + (torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda") - 0.5) * 2 * 0.01, 
         #                                       0.0, 1.0))
-        scalars = inverse_sigmoid((torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")))
+        if pcd.values is not None:
+            print("Dropout values given")
+            scalars = inverse_sigmoid(
+                torch.tensor(pcd.values, dtype=torch.float, device="cuda").reshape(-1, 1)
+            )
+        else:
+            scalars = inverse_sigmoid((torch.rand((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda")))
         self._scalar = nn.Parameter(scalars.clone().requires_grad_(True))
         self._scalar2 = nn.Parameter(scalars.clone().requires_grad_(True))
 
@@ -803,7 +809,7 @@ class ScalarGaussianModel:
             self._specular_factor = optimizable_tensors["specular_factor"]
             
 
-    def cat_tensors_to_optimizer(self, tensors_dict):
+    def cat_tensors_to_optimizer(self, tensors_dict, source_indices, mode):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
             assert len(group["params"]) == 1
@@ -815,6 +821,15 @@ class ScalarGaussianModel:
             # ic(stored_state["exp_avg"].shape)
             # ic(stored_state["exp_avg_sq"].shape)
             if stored_state is not None:
+                if group["name"].startswith("scalar"):
+                    exp_avg = stored_state["exp_avg"][source_indices].clone()
+                    exp_avg_sq = stored_state["exp_avg_sq"][source_indices].clone()
+                    if mode == "split":
+                        exp_avg = exp_avg.repeat(2, 1)
+                        exp_avg_sq = exp_avg_sq.repeat(2, 1)
+                else:
+                    exp_avg = torch.zeros_like(extension_tensor)
+                    exp_avg_sq = torch.zeros_like(extension_tensor)
                 stored_state["exp_avg"] = torch.cat(
                     (stored_state["exp_avg"], torch.zeros_like(extension_tensor)), dim=0)
                 stored_state["exp_avg_sq"] = torch.cat(
@@ -834,9 +849,9 @@ class ScalarGaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_normal, new_opacities, new_scaling, new_rotation, 
+    def densification_postfix(self, new_xyz, new_normal, new_opacities, new_scaling, new_rotation,
                               new_diffuse_factor=None, new_shininess=None, new_ambient_factor=None, 
-                              new_specular_factor=None, new_scalar=None, new_scalar2=None):
+                              new_specular_factor=None, new_scalar=None, new_scalar2=None, source_indices=None, mode=None):
         d = {
             "xyz": new_xyz,
             "normal": new_normal,
@@ -855,7 +870,7 @@ class ScalarGaussianModel:
                 "specular_factor": new_specular_factor
             })
 
-        optimizable_tensors = self.cat_tensors_to_optimizer(d)
+        optimizable_tensors = self.cat_tensors_to_optimizer(d, source_indices, mode)
 
         self._xyz = optimizable_tensors["xyz"]
         self._normal = optimizable_tensors["normal"]
@@ -915,6 +930,8 @@ class ScalarGaussianModel:
 
         kwargs["new_scalar"] = self._scalar[selected_pts_mask].repeat(N, 1)
         kwargs["new_scalar2"] = self._scalar2[selected_pts_mask].repeat(N, 1)
+        kwargs["mode"] = "split"
+        kwargs["source_indices"] = selected_pts_mask
 
         if self.use_phong:
             kwargs.update(
@@ -954,6 +971,8 @@ class ScalarGaussianModel:
             "new_scaling": new_scaling,
             "new_rotation": new_rotation,
         }
+        kwargs["mode"] = "clone"
+        kwargs["source_indices"] = selected_pts_mask
 
         kwargs["new_scalar"] = self._scalar[selected_pts_mask]
         kwargs["new_scalar2"] = self._scalar2[selected_pts_mask]
@@ -982,6 +1001,8 @@ class ScalarGaussianModel:
         # self.densify_and_compact()
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
+        # prune_mask2 = (torch.max(self.get_scaling, dim=1).values < 0.001).squeeze()
+        # prune_mask = torch.logical_or(prune_mask, prune_mask2)
         if max_screen_size:
             big_points_vs = self.max_radii2D > max_screen_size
             big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent

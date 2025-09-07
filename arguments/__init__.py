@@ -84,10 +84,12 @@ class OptimizationParams(ParamGroup):
         self.position_lr_max_steps = 30_000
         self.normal_lr = 0.01
         self.sh_lr = 0.0025
-        self.opacity_lr = 0.05
-        self.scalar_lr = 0.05
+        self.opacity_lr = 0.05 #TODO: lower this
+        self.scalar_lr = 0.0125
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
+        # self.scaling_lr = 0.001
+        # self.rotation_lr = 0.0001
         #* this is for learnable lighting transform
         self.theta_lr = 0.01
         self.phi_lr = 0.01
@@ -112,12 +114,12 @@ class OptimizationParams(ParamGroup):
 
         self.percent_dense = 0.001
         self.densification_interval = 100
-        self.opacity_reset_interval = 3000
+        self.opacity_reset_interval = 300000
         self.densify_from_iter = 500
-        self.densify_until_iter = 10_000 # default: 10_000
+        self.densify_until_iter = 20_000 # default: 10_000
 
         self.densify_grad_threshold = 0.0002 #default: 0.0002
-        self.densify_grad_normal_threshold = 0.0002 #default: 0.000004
+        self.densify_grad_normal_threshold = 0.002 #default: 0.000004
 
         self.lambda_depth = 0.0
         self.lambda_opacity = 0.0

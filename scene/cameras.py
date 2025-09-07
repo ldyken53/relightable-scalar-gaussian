@@ -41,20 +41,10 @@ class Camera(nn.Module):
             self.image_width = width
             self.image_height = height
 
-        if depth is not None:
-            self.depth = depth
-        else:
-            self.depth = torch.zeros((1, self.image_height, self.image_width), dtype=torch.float32, device=data_device)
-
-        if normal is not None:
-            self.normal = normal
-        else:
-            self.normal = torch.zeros((3, self.image_height, self.image_width), dtype=torch.float32, device=data_device)
-
         if image_mask is not None:
             self.image_mask = image_mask
         else:
-            self.image_mask = torch.ones_like(self.depth)
+            self.image_mask = torch.ones((1, self.image_height, self.image_width), dtype=torch.float32, device=data_device)
 
         if colormap is None:
             colormap = "rainbow"
@@ -64,18 +54,19 @@ class Camera(nn.Module):
         self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
 
         num_points = 100
-        num_maps = 5
+        num_maps = 10
         opacs = []
         indices = np.linspace(0, 1, num_points)
         step_size = 1.0 / num_maps
         eps = 1e-4
+        slope = 1.0
         for step in range(num_maps):
             center = step * step_size + step_size / 2 + eps
             arr = np.zeros(num_points, dtype=np.float32)
             
             for i, x in enumerate(indices):
                 dist = abs(x - center)
-                arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
+                arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
             opacs.append(arr)
         if opac_map is not None:
             self.opac_map = torch.tensor(opacs[opac_map].reshape(-1, 1), dtype=torch.float32).to("cuda")

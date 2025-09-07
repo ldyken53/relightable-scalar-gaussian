@@ -60,5 +60,5 @@ for i in "${indices[@]}"; do
         --is_scalar
 
     toc=$(date +%s)
-    echo "Processing index ${i} took $((toc - tic)) seconds" >> "output/${exp_name}/TF${i}/time.txt"
+    echo "Processing index ${i} took $((toc - tic)) seconds" >> "output/${exp_name}scalar/TF${i}/time.txt"
 done
