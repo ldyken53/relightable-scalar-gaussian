@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 import random
 from plyfile import PlyData, PlyElement
 import torch
+import math
 
 from utils.graphics_utils import focal2fov, fov2focal
 
@@ -160,12 +161,13 @@ def buildRawDataset(
     random_colormaps,
     dropout,
     narrow,
-    broad
+    broad,
+    white
 ):
     if narrow:
         num_maps = num_maps * 2
     if broad:
-        num_maps = num_maps // 2
+        num_maps = math.ceil(num_maps / 2)
     start_time = time.time()
     num_points = 100
     slope = 1
@@ -199,9 +201,11 @@ def buildRawDataset(
     height = 800
     pl = pv.Plotter(off_screen=True, lighting="none")
     headlight = pv.Light(light_type='headlight')
-    headlight.intensity = 1.0
+    headlight.intensity = 2.0
     pl.add_light(headlight)
     pl.window_size = [width, height]
+    if white:
+       pl.background_color = 'white'
 
     if raw_file.endswith(".vtu"):
         dir = os.path.join(out_path, os.path.basename(raw_file).rsplit(".", 1)[0])
@@ -252,7 +256,7 @@ def buildRawDataset(
         normalized_values[valid_mask] = (values[valid_mask] - values_min) / (values_max - values_min)
         
         # Set NaN values to a value that will result in zero opacity
-        normalized_values[~valid_mask] = -1.0
+        normalized_values[~valid_mask] = 0.0
         
         mesh.get_array("value")[:] = normalized_values.ravel()
 
@@ -365,7 +369,8 @@ def buildRawDataset(
     for i, opac in enumerate(opacs):
         train_cams = []
         test_cams = []
-        opac_dir = os.path.join(dir, f"{'R' if not triangular else ''}{'NS' if not shade else ''}{'CC' if random_colormaps else ''}{'NA' if narrow else ''}{'B' if broad else ''}TF{(i+1):02d}")
+        opac_dir = os.path.join(dir, 
+            f"{'WT' if white else ''}{'R' if not triangular else ''}{'NS' if not shade else ''}{'CC' if random_colormaps else ''}{'NA' if narrow else ''}{'B' if broad else ''}TF{(i+1):02d}")
         if os.path.exists(opac_dir):
             shutil.rmtree(opac_dir)
         os.makedirs(opac_dir)
@@ -405,7 +410,7 @@ def buildRawDataset(
                     # Produce a new render at the new camera position
                     pl.render()
 
-                    img = pl.screenshot(None, transparent_background=True, return_img=True)
+                    img = pl.screenshot(None, transparent_background=(not white), return_img=True)
 
                     if is_image_blank(img):
                         skip_count += 1
@@ -521,5 +526,9 @@ if __name__ == "__main__":
         "--broad",
         action="store_true"
     )
+    parser.add_argument(
+        "--white",
+        action="store_true"
+    )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps, args.dropout, args.narrow, args.broad)
+    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps, args.dropout, args.narrow, args.broad, args.white)
