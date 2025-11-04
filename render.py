@@ -144,7 +144,7 @@ if __name__ == '__main__':
     
 
     # load configs
-    tf_folders = glob.glob(os.path.join(args.view_config, "NATF*"))
+    tf_folders = glob.glob(os.path.join(args.view_config, "TF*"))
     tf_folders = [folder for folder in tf_folders if os.path.isdir(folder)]
     view_dict = []
 
@@ -188,7 +188,9 @@ if __name__ == '__main__':
     # load gaussians
     gaussians_composite = scene_composition(scene_dict, dataset, args.is_scalar)
     if not args.is_scalar:
-        gaussians_composite.my_save_ply(args.source_dir, quantised=True, half_float=True)
+        gaussians_composite.produce_clusters(store_dict_path=args.source_dir)
+        gaussians_composite.apply_clustering(codebook_dict=gaussians_composite._codebook_dict)
+        gaussians_composite.my_save_ply(os.path.join(args.source_dir, "my_point_cloudnq.ply"), quantised=True, half_float=True)
 
     # rendering
     capture_dir = args.output
@@ -274,8 +276,8 @@ if __name__ == '__main__':
             omap = opacs[cam_info["opac_map"]]
             for i in range(len(TFs_names)):
                 # Calculate the interval for this TF
-                interval_start = i / 10
-                interval_end = (i + 1) / 10
+                interval_start = i / len(TFs_names)
+                interval_end = (i + 1) / len(TFs_names)
                 midpoint = (interval_start + interval_end) / 2.0
                 # Get the color from the colormap at the midpoint
                 rgba_color = cmap(midpoint)  # Returns (r, g, b, a) in [0, 1]
@@ -289,10 +291,9 @@ if __name__ == '__main__':
                 weight = omap_float_index - omap_index_low
                 opac = omap[omap_index_low] * (1 - weight) + omap[omap_index_high] * weight
                 with torch.no_grad():
-                    if args.TFnums != 10:
-                        render_kwargs["dict_params"]["palette_colors"][i].palette_color = torch.tensor(
-                            rgb_color, dtype=torch.float32, device="cuda"
-                        )
+                #     render_kwargs["dict_params"]["palette_colors"][i].palette_color = torch.tensor(
+                #         rgb_color, dtype=torch.float32, device="cuda"
+                #     )
                     render_kwargs["dict_params"]["opacity_factors"][i].opacity_factor = torch.tensor(
                         opac, dtype=torch.float32, device="cuda"
                     )
@@ -365,8 +366,10 @@ if __name__ == '__main__':
 
             else:
                 GTImg = GTImg[:, :, :3]
-            GTtensor = numpy_to_tensor(GTImg)
-            evaltensor = numpy_to_tensor(evalImg)
+            GTImg_rgb = cv2.cvtColor(GTImg, cv2.COLOR_BGR2RGB)
+            evalImg_rgb = cv2.cvtColor(evalImg, cv2.COLOR_BGR2RGB)
+            GTtensor = numpy_to_tensor(GTImg_rgb)
+            evaltensor = numpy_to_tensor(evalImg_rgb)
             # psnr_test += psnr(GTtensor, evaltensor).mean().double()
             ssim_test += ssim(GTtensor, evaltensor).mean().double()
             # lpips_test += lpips(GTtensor, evaltensor, net_type='vgg').mean().double()
@@ -383,12 +386,13 @@ if __name__ == '__main__':
             grid = make_grid(grid, nrow=4)
             save_image(grid, f"{opac_subfolder}/a{os.path.basename(numeric_part)}.png")
             cv2.imwrite(f"{opac_subfolder}/GT{os.path.basename(numeric_part)}.png", GTImg)
+        print(opac_counts)
         psnr_test /= len(view_dict)
         lpips_test /= len(view_dict)
         ssim_test /= len(view_dict)
         psnr2_test /= len(view_dict)
         print(f"Tensor PSNR: {psnr_test}, LPIPS: {lpips_test}, SSIM: {ssim_test}, PSNR: {psnr2_test}")
-        opac_psnrs = [opac_psnrs[i] / opac_counts[i] for i in range(args.TFnums)]
+        opac_psnrs = [opac_psnrs[i] / opac_counts[i] if opac_counts[i] else 0 for i in range(args.TFnums)]
         print(f"PSNR per TF: {[f'{psnr:.2f}' for psnr in opac_psnrs]}")
 
 
