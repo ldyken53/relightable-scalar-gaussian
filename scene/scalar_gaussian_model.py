@@ -468,9 +468,7 @@ class ScalarGaussianModel:
                             self._codebook_dict["rotation_im"].ids),
                             dim=1)
             diffuse_factor = self._codebook_dict["diffuse_factor"].ids
-            shininess = self._codebook_dict["shininess"].ids
             ambient_factor = self._codebook_dict["ambient_factor"].ids
-            specular_factor = self._codebook_dict["specular_factor"].ids
             scalar = self._codebook_dict["scalar"].ids
             scalar2 = self._codebook_dict["scalar2"].ids
             
@@ -494,18 +492,21 @@ class ScalarGaussianModel:
             scaling = self._scaling
             rot = self._rotation
             diffuse_factor = self._diffuse_factor
-            shininess = self._shininess
             ambient_factor = self._ambient_factor
-            specular_factor = self._specular_factor
             scalar = self._scalar
             scalar2 = self._scalar2
 
         #  Position&Normal is not quantised
         if half_float:
             xyz = self._xyz.detach().cpu().half().view(dtype=torch.int16).numpy()
+            shininess = self._shininess.detach().cpu().half().view(dtype=torch.int16).numpy()
+            specular_factor = self._specular_factor.detach().cpu().half().view(dtype=torch.int16).numpy()
             # normal = self._normal.detach().cpu().half().view(dtype=torch.int16).numpy()
         else:
             xyz = self._xyz.detach().cpu().numpy()
+            shininess = self._shininess.detach().cpu().numpy()
+            specular_factor = self._specular_factor.detach().cpu().numpy()
+
             # normal = self._normal.detach().cpu().numpy()
 
         opacities = opacity.detach().cpu().numpy()
@@ -513,9 +514,7 @@ class ScalarGaussianModel:
         normal = normal.detach().cpu().numpy()#* quantised normal
         rotation = rot.detach().cpu().numpy()
         diffuse_factor = diffuse_factor.detach().cpu().numpy()
-        shininess = shininess.detach().cpu().numpy()
         ambient_factor = ambient_factor.detach().cpu().numpy()
-        specular_factor = specular_factor.detach().cpu().numpy()
         scalar = scalar.detach().cpu().numpy()
         scalar2 = scalar2.detach().cpu().numpy()
 
@@ -523,7 +522,7 @@ class ScalarGaussianModel:
         #                 if attribute in ['x', 'y', 'z', 'nx', 'ny', 'nz'] else (attribute, attribute_type) 
         #                 for attribute in self.construct_list_of_attributes()]
         dtype_full = [(attribute, float_type) 
-                        if attribute in ['x', 'y', 'z'] else (attribute, attribute_type) 
+                        if attribute in ['x', 'y', 'z', 'shininess', 'specular_factor'] else (attribute, attribute_type) 
                         for attribute in self.construct_list_of_attributes()]
         gaussian_nums = xyz.shape[0]
 
@@ -567,16 +566,23 @@ class ScalarGaussianModel:
         normal = stack_vector_attribute("normal", 3) #* quantised normal
         rotation = stack_vector_attribute("rot", 4)
         diffuse_factor = np.asarray(vertex_group["diffuse_factor"], dtype=attribute_type)[..., np.newaxis]
-        shininess = np.asarray(vertex_group["shininess"], dtype=attribute_type)[..., np.newaxis]
         ambient_factor = np.asarray(vertex_group["ambient_factor"], dtype=attribute_type)[..., np.newaxis]
-        specular_factor = np.asarray(vertex_group["specular_factor"], dtype=attribute_type)[..., np.newaxis]
         scalar = np.asarray(vertex_group["scalar"], dtype=attribute_type)[..., np.newaxis]
         scalar2 = np.asarray(vertex_group["scalar2"], dtype=attribute_type)[..., np.newaxis]
+        # Quantizing these leads to bad performance
+        shininess = np.asarray(vertex_group["shininess"], dtype=float_type).copy()[..., np.newaxis]
+        specular_factor = np.asarray(vertex_group["specular_factor"], dtype=float_type).copy()[..., np.newaxis]
+        print(shininess.shape)
+        print(xyz.shape)
 
         xyz = torch.from_numpy(xyz).cuda()
+        shininess = torch.from_numpy(shininess).cuda()
+        specular_factor = torch.from_numpy(specular_factor).cuda()
         # normal = torch.from_numpy(normal).cuda()
         if half_precision:
             xyz = pcast_i16_to_f32(xyz)
+            shininess = pcast_i16_to_f32(shininess)
+            specular_factor = pcast_i16_to_f32(specular_factor)
             # normal = pcast_i16_to_f32(normal)
   
         opacity = torch.from_numpy(opacity).cuda()
@@ -584,9 +590,7 @@ class ScalarGaussianModel:
         rotation = torch.from_numpy(rotation).cuda()
         normal = torch.from_numpy(normal).cuda() #* quantised normal
         diffuse_factor = torch.from_numpy(diffuse_factor).cuda()
-        shininess = torch.from_numpy(shininess).cuda()
         ambient_factor = torch.from_numpy(ambient_factor).cuda()
-        specular_factor = torch.from_numpy(specular_factor).cuda()
         scalar = torch.from_numpy(scalar).cuda()
         scalar2 = torch.from_numpy(scalar2).cuda()
 
@@ -606,9 +610,7 @@ class ScalarGaussianModel:
                 codebook_centers_torch['rotation_im'][rotation[:, 1:].reshape(num_primitives*3).long()].view(num_primitives,3)
                 ), dim=1)
             diffuse_factor = codebook_centers_torch['diffuse_factor'][diffuse_factor.long()]
-            shininess = codebook_centers_torch['shininess'][shininess.long()]
             ambient_factor = codebook_centers_torch['ambient_factor'][ambient_factor.long()]
-            specular_factor = codebook_centers_torch['specular_factor'][specular_factor.long()]
             scalar = codebook_centers_torch['scalar'][scalar.long()]
             scalar2 = codebook_centers_torch['scalar2'][scalar2.long()]
 
@@ -660,9 +662,7 @@ class ScalarGaussianModel:
             codebook_centers_torch['rotation_re'] = torch.from_numpy(np.asarray(codebook_centers['rotation_re'], dtype=float_type)).cuda()
             codebook_centers_torch['rotation_im'] = torch.from_numpy(np.asarray(codebook_centers['rotation_im'], dtype=float_type)).cuda()
             codebook_centers_torch['diffuse_factor'] = torch.from_numpy(np.asarray(codebook_centers['diffuse_factor'], dtype=float_type)).cuda()
-            codebook_centers_torch['shininess'] = torch.from_numpy(np.asarray(codebook_centers['shininess'], dtype=float_type)).cuda()
             codebook_centers_torch['ambient_factor'] = torch.from_numpy(np.asarray(codebook_centers['ambient_factor'], dtype=float_type)).cuda()
-            codebook_centers_torch['specular_factor'] = torch.from_numpy(np.asarray(codebook_centers['specular_factor'], dtype=float_type)).cuda()
             codebook_centers_torch['scalar'] = torch.from_numpy(np.asarray(codebook_centers['scalar'], dtype=float_type)).cuda()
             codebook_centers_torch['scalar2'] = torch.from_numpy(np.asarray(codebook_centers['scalar2'], dtype=float_type)).cuda()
 
@@ -1084,12 +1084,8 @@ class ScalarGaussianModel:
         #* Phong attributes
         codebook_dict["diffuse_factor"] = generate_codebook(self.get_diffuse_factor.detach(),
                                                             num_clusters=num_clusters)
-        codebook_dict["shininess"] = generate_codebook(self.get_shininess.detach(),
-                                                      num_clusters=num_clusters)
         codebook_dict["ambient_factor"] = generate_codebook(self.get_ambient_factor.detach(),
                                                               num_clusters=num_clusters)
-        codebook_dict["specular_factor"] = generate_codebook(self.get_specular_factor.detach(),
-                                                                num_clusters=num_clusters)
 
         if store_dict_path is not None:
             torch.save(codebook_dict, os.path.join(store_dict_path, 'codebook.pt'))
@@ -1112,9 +1108,7 @@ class ScalarGaussianModel:
         scalar2 = codebook_dict["scalar2"].evaluate().requires_grad_(True)
 
         diffuse_factor = codebook_dict["diffuse_factor"].evaluate().requires_grad_(True)
-        shininess = codebook_dict["shininess"].evaluate().requires_grad_(True)
         ambient_factor = codebook_dict["ambient_factor"].evaluate().requires_grad_(True)
-        specular_factor = codebook_dict["specular_factor"].evaluate().requires_grad_(True)
         # save_tensor(normal, "normal.pt") 
         # save_tensor(opacity, "opacity.pt")
         # save_tensor(scaling, "scaling.pt")
@@ -1133,9 +1127,7 @@ class ScalarGaussianModel:
             self._scalar = scalar
             self._scalar2 = scalar2
             self._diffuse_factor = diffuse_factor
-            self._shininess = shininess
             self._ambient_factor = ambient_factor
-            self._specular_factor = specular_factor
     
     def freeze_attributes(self):
         self._opacity.requires_grad_(False)
