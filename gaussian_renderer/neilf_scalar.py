@@ -139,7 +139,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
     means3D = pc.get_xyz
     means2D = screenspace_points
     pc_opacity = pc.get_opacity
-    scalar_opacity = scalar2opac(pc.get_scalar2, camera.opac_map)
+    scalar_opacity = scalar2opac(pc.get_scalar, camera.opac_map)
     opacity = pc_opacity * scalar_opacity
     # pc._opacity = inverse_sigmoid(opacity.detach().clone())
 
@@ -160,7 +160,7 @@ def render_view(camera: Camera, pc: GaussianModel, pipe, bg_color: torch.Tensor,
         (means3D.shape[0], 3),
         device="cuda", dtype=means3D.dtype)
 
-    scalar_color = scalar2rgb(pc.get_scalar2, camera.colormap)
+    scalar_color = scalar2rgb(pc.get_scalar, camera.colormap)
  
     diffuse_factor = pc.get_diffuse_factor
     shininess = pc.get_shininess

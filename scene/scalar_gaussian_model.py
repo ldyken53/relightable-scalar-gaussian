@@ -306,19 +306,18 @@ class ScalarGaussianModel:
          denom,
          opt_dict,
          self.spatial_lr_scale,
-         test,
-         self._scalar) = model_args[:13]
+         self._scalar) = model_args[:12]
 
         self.xyz_gradient_accum = xyz_gradient_accum
         self.normal_gradient_accum = normal_gradient_accum
         self.denom = denom
 
         if self.use_phong:
-            if len(model_args) > 13:
+            if len(model_args) > 12:
                 (self._diffuse_factor, 
                  self._shininess,
                  self._ambient_factor,
-                 self._specular_factor) = model_args[13:]
+                 self._specular_factor) = model_args[12:]
             else: #* default init all zeros
                 self._diffuse_factor = nn.Parameter((torch.zeros_like(self._xyz[..., :1])).requires_grad_(True))
                 self._shininess = nn.Parameter(torch.ones_like(self._xyz[..., :1]).requires_grad_(True))
