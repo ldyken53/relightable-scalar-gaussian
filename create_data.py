@@ -162,12 +162,13 @@ def buildRawDataset(
     dropout,
     narrow,
     broad,
-    white
+    white,
+    zoom
 ):
     if narrow:
         num_maps = num_maps * 2
     if broad:
-        num_maps = math.ceil(num_maps / 2)
+        num_maps = num_maps // 2
     start_time = time.time()
     num_points = 100
     slope = 1
@@ -216,6 +217,11 @@ def buildRawDataset(
         conversion_start = time.time()
         
         bounds = unstructured_mesh.bounds
+        # xmin, xmax, ymin, ymax, zmin, zmax = bounds
+        # global_min = min(xmin, ymin, zmin)
+        # global_max = max(xmax, ymax, zmax)
+        # unstructured_mesh.translate(np.array([-global_min, -global_min, -global_min]), inplace=True)
+        # unstructured_mesh.scale(1.0/(global_max - global_min), inplace=True)
         resolution = 512
         
         structured_grid = pv.ImageData(
@@ -361,8 +367,9 @@ def buildRawDataset(
         return
 
     # Controls the camera orbit and capture frequency
-    azimuth_steps = 32 if not random_colormaps and not narrow else 16
-    elevation_steps = 10 if not random_colormaps and not narrow else 5
+    zooms = [1] if not zoom else [2, 2, 3, 3]
+    azimuth_steps = 16 if not random_colormaps and not narrow and not zoom else 16
+    elevation_steps = 10 if not random_colormaps and not narrow and not zoom else 5
     azimuth_range = np.linspace(0, 360, azimuth_steps, endpoint=False)
     # elevation is intentionally limited to avoid a render bug(s) that occurs when elevation is outside of [-35, 35]
     elevation_range = np.linspace(-35, 35, elevation_steps, endpoint=True)
@@ -370,7 +377,7 @@ def buildRawDataset(
         train_cams = []
         test_cams = []
         opac_dir = os.path.join(dir, 
-            f"{'WT' if white else ''}{'R' if not triangular else ''}{'NS' if not shade else ''}{'CC' if random_colormaps else ''}{'NA' if narrow else ''}{'B' if broad else ''}TF{(i+1):02d}")
+            f"{'Z' if zoom else ''}{'WT' if white else ''}{'R' if not triangular else ''}{'NS' if not shade else ''}{'CC' if random_colormaps else ''}{'NA' if narrow else ''}{'B' if broad else ''}TF{(i+1):02d}")
         if os.path.exists(opac_dir):
             shutil.rmtree(opac_dir)
         os.makedirs(opac_dir)
@@ -393,77 +400,83 @@ def buildRawDataset(
                 opacity=opac * 255,
                 shade=shade,
                 render=False,
+                # ambient=0.3,
                 # opacity_unit_distance=(1.0 / 256.0)
             )
             pl.view_xy(render=False)
+            initial_view_angle = camera.view_angle
+
             print(
                 f"Time taken to update the volume: {time.time() - start_time:.2f} seconds"
             )
             skip_count = 0
             start_time = time.time()
-            for elevation in elevation_range:
-                for azimuth in azimuth_range:
-                    # Set new azimuth and elevation
-                    camera.elevation = elevation
-                    camera.azimuth = azimuth
+            for z in zooms:
+                camera.view_angle = initial_view_angle
+                pl.camera.zoom(z)
+                for elevation in elevation_range:
+                    for azimuth in azimuth_range:
+                        # Set new azimuth and elevation
+                        camera.elevation = elevation
+                        camera.azimuth = azimuth
 
-                    # Produce a new render at the new camera position
-                    pl.render()
+                        # Produce a new render at the new camera position
+                        pl.render()
 
-                    img = pl.screenshot(None, transparent_background=(not white), return_img=True)
+                        img = pl.screenshot(None, transparent_background=(not white), return_img=True)
 
-                    if is_image_blank(img):
-                        skip_count += 1
-                        im_count += 1
-                        continue
-                    
-                    # Save the render as a new image
-                    image_name = (
-                        f"r_{(im_count // 2):04d}.png"
-                    )
-                    if im_count % 2 == 0:
-                        if random_colormaps or narrow or broad:
+                        if is_image_blank(img):
+                            skip_count += 1
                             im_count += 1
                             continue
-                        image_path = os.path.join(train_dir, image_name)
-                    else:
-                        image_path = os.path.join(test_dir, image_name)
-                    plt.imsave(image_path, img)
+                        
+                        # Save the render as a new image
+                        image_name = (
+                            f"r_{(im_count // 2):04d}.png"
+                        )
+                        if im_count % 2 == 0:
+                            if random_colormaps or narrow or broad or zoom:
+                                im_count += 1
+                                continue
+                            image_path = os.path.join(train_dir, image_name)
+                        else:
+                            image_path = os.path.join(test_dir, image_name)
+                        plt.imsave(image_path, img)
 
-                    # Convert 4x4 VTK matrix to NumPy and invert
-                    mvt_matrix = np.linalg.inv(
-                        arrayFromVTKMatrix(camera.GetModelViewTransformMatrix())
-                    )
+                        # Convert 4x4 VTK matrix to NumPy and invert
+                        mvt_matrix = np.linalg.inv(
+                            arrayFromVTKMatrix(camera.GetModelViewTransformMatrix())
+                        )
 
-                    # Y/Z flip (likely due to coordinate system handedness)
-                    mvt_matrix[:3, 1:3] *= -1
+                        # Y/Z flip (likely due to coordinate system handedness)
+                        mvt_matrix[:3, 1:3] *= -1
 
-                    # Extract rotation and translation
-                    R = mvt_matrix[:3, :3].T  # transpose to match camera convention
-                    T = mvt_matrix[:3, 3]
+                        # Extract rotation and translation
+                        R = mvt_matrix[:3, :3].T  # transpose to match camera convention
+                        T = mvt_matrix[:3, 3]
 
-                    # FOV conversions
-                    FovY = np.radians(camera.view_angle)
-                    FovX = focal2fov(fov2focal(FovY, height), width)
+                        # FOV conversions
+                        FovY = np.radians(camera.view_angle)
+                        FovX = focal2fov(fov2focal(FovY, height), width)
 
-                    cam_info = CameraInfo(
-                        uid=im_count // 2,
-                        R=R,
-                        T=T,
-                        FovY=FovY,
-                        FovX=FovX,
-                        image_path=image_path.replace(opac_dir, "./", 1),
-                        image_name=image_name,
-                        width=width,
-                        height=height,
-                        colormap=cmap,
-                        opac_map=i
-                    )
-                    if im_count % 2 == 0:
-                        train_cams.append(cam_info)
-                    else:
-                        test_cams.append(cam_info)
-                    im_count += 1
+                        cam_info = CameraInfo(
+                            uid=im_count // 2,
+                            R=R,
+                            T=T,
+                            FovY=FovY,
+                            FovX=FovX,
+                            image_path=image_path.replace(opac_dir, "./", 1),
+                            image_name=image_name,
+                            width=width,
+                            height=height,
+                            colormap=cmap,
+                            opac_map=i
+                        )
+                        if im_count % 2 == 0:
+                            train_cams.append(cam_info)
+                        else:
+                            test_cams.append(cam_info)
+                        im_count += 1
             print(f"Number of skips: {skip_count}")
 
         with open(
@@ -530,5 +543,9 @@ if __name__ == "__main__":
         "--white",
         action="store_true"
     )
+    parser.add_argument(
+        "--zoom",
+        action="store_true"
+    )
     args = parser.parse_args(sys.argv[1:])
-    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps, args.dropout, args.narrow, args.broad, args.white)
+    buildRawDataset(args.path, args.file, args.num_maps, (not args.rectangular), (not args.noshade), args.randomcolormaps, args.dropout, args.narrow, args.broad, args.white, args.zoom)
