@@ -39,14 +39,20 @@ def load_json_config(json_file):
 
     return load_dict
 
-def load_ckpts_paths(source_dir):
-    TFs_folders = sorted(glob.glob(f"{source_dir}/TF*"))
+def load_ckpts_paths(source_dir, is_scalar):
+    if is_scalar:
+        TFs_folders = sorted(glob.glob(f"{source_dir}"))
+    else:
+        TFs_folders = sorted(glob.glob(f"{source_dir}/TF*"))
     TFs_names = sorted([os.path.basename(folder) for folder in TFs_folders])
 
     ckpts_transforms = {}
     for idx, TF_folder in enumerate(TFs_folders):
         one_TF_json = {'path': None, 'palette':None, 'transform': [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
-        ckpt_dir = os.path.join(TF_folder,"neilf","point_cloud")
+        if is_scalar:
+            ckpt_dir = os.path.join(TF_folder,"point_cloud")
+        else:
+            ckpt_dir = os.path.join(TF_folder,"neilf","point_cloud")
         max_iters = searchForMaxIteration(ckpt_dir)
         ckpt_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "point_cloud.ply")
         palette_path = os.path.join(ckpt_dir, f"iteration_{max_iters}", "palette_colors_chkpnt.pth")
@@ -65,7 +71,6 @@ def scene_composition(scene_dict: dict, dataset: ModelParams, is_scalar = False)
             gaussians = GaussianModel(dataset.sh_degree, render_type="phong")
         print("Compose scene from GS path:", scene_dict[scene]["path"])
         gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
-        # gaussians.my_load_ply(scene_dict[scene]["path"], quantised=False, half_float=False)
         
         torch_transform = torch.tensor(scene_dict[scene]["transform"], device="cuda").reshape(4, 4)
         gaussians.set_transform(transform=torch_transform)
@@ -168,7 +173,7 @@ if __name__ == '__main__':
     
     light_transform = LearningLightTransform(theta=180, phi=0)
 
-    scene_dict = load_ckpts_paths(args.source_dir)
+    scene_dict = load_ckpts_paths(args.source_dir, args.is_scalar)
     TFs_names = list(scene_dict.keys())
     palette_color_transforms = []
     opacity_transforms = []
@@ -187,10 +192,10 @@ if __name__ == '__main__':
         TFcount+=1
     # load gaussians
     gaussians_composite = scene_composition(scene_dict, dataset, args.is_scalar)
-    if not args.is_scalar:
-        gaussians_composite.produce_clusters(store_dict_path=args.source_dir)
-        gaussians_composite.apply_clustering(codebook_dict=gaussians_composite._codebook_dict)
-        gaussians_composite.my_save_ply(os.path.join(args.source_dir, "my_point_cloudnq.ply"), quantised=True, half_float=True)
+    # if not args.is_scalar:
+    #     gaussians_composite.produce_clusters(store_dict_path=args.source_dir)
+    #     gaussians_composite.apply_clustering(codebook_dict=gaussians_composite._codebook_dict)
+    #     gaussians_composite.my_save_ply(os.path.join(args.source_dir, "my_point_cloudnq.ply"), quantised=True, half_float=True)
 
     # rendering
     capture_dir = args.output
@@ -214,9 +219,9 @@ if __name__ == '__main__':
         "bg_color": background,
         "is_training": False,
         "dict_params": {
-            "sample_num": args.sample_num,
+            # "sample_num": args.sample_num,
             "palette_colors": palette_color_transforms,
-            "light_transform": light_transform,
+            # "light_transform": light_transform,
             "opacity_factors": opacity_transforms
         }
     }
@@ -232,7 +237,6 @@ if __name__ == '__main__':
     for step in range(num_maps):
         center = step * step_size + step_size / 2 + eps
         arr = np.zeros(num_points, dtype=np.float32)
-        
         for i, x in enumerate(indices):
             dist = abs(x - center)
             arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
@@ -291,9 +295,9 @@ if __name__ == '__main__':
                 weight = omap_float_index - omap_index_low
                 opac = omap[omap_index_low] * (1 - weight) + omap[omap_index_high] * weight
                 with torch.no_grad():
-                #     render_kwargs["dict_params"]["palette_colors"][i].palette_color = torch.tensor(
-                #         rgb_color, dtype=torch.float32, device="cuda"
-                #     )
+                    render_kwargs["dict_params"]["palette_colors"][i].palette_color = torch.tensor(
+                        rgb_color, dtype=torch.float32, device="cuda"
+                    )
                     render_kwargs["dict_params"]["opacity_factors"][i].opacity_factor = torch.tensor(
                         opac, dtype=torch.float32, device="cuda"
                     )
@@ -352,7 +356,6 @@ if __name__ == '__main__':
 
             if GTImg.shape[2] == 4:
                 alpha = GTImg[:, :, 3] / 255.0  
-                alpha_mask = alpha >= 0.9
                 if dataset.white_background:
                     result = np.ones_like(GTImg[:, :, :3]) * 255
                 else:
@@ -360,9 +363,7 @@ if __name__ == '__main__':
     
                     result = np.zeros_like(GTImg[:, :, :3])
                     
-                # GTImg = (GTImg[:, :, :3] * alpha[:, :, None] + white_bg * (1 - alpha[:, :, None])).astype(np.uint8)
-                result[alpha_mask] = GTImg[:, :, :3][alpha_mask]
-                GTImg = result.astype(np.uint8)
+                GTImg = (GTImg[:, :, :3] * alpha[:, :, None] + result * (1 - alpha[:, :, None])).astype(np.uint8)
 
             else:
                 GTImg = GTImg[:, :, :3]
@@ -377,10 +378,17 @@ if __name__ == '__main__':
             psnr2_test += psnr
             opac_psnrs[cam_info['opac_map']] += psnr
             opac_counts[cam_info['opac_map']] += 1
-            color_diff = np.abs(GTImg.astype(np.float32) - evalImg.astype(np.float32))
-            diff = np.mean(color_diff, axis=2) / 255.0
-            cdiff = plt.cm.get_cmap("viridis")(diff)
-            diff_colored_bgr = (cdiff[:, :, [2, 1, 0]] * 255).astype(np.uint8)
+            GTImg_luv = cv2.cvtColor(GTImg_rgb, cv2.COLOR_RGB2Luv)
+            evalImg_luv = cv2.cvtColor(evalImg_rgb, cv2.COLOR_RGB2Luv)
+            color_diff = np.sqrt(np.sum((GTImg_luv.astype(np.float32) - evalImg_luv.astype(np.float32))**2, axis=2))
+            color_diff_norm = color_diff / 100
+            threshold = 0.0
+            mask = color_diff_norm > threshold
+            color_diff_norm[color_diff_norm < threshold] = 0
+            cdiff = plt.cm.get_cmap("jet")(color_diff_norm)
+            diff_colored_bgr = np.ones((color_diff.shape[0], color_diff.shape[1], 4), dtype=np.uint8) * 255
+            diff_colored_bgr[mask, :3] = (cdiff[mask][:, [2, 1, 0]] * 255).astype(np.uint8)      
+            diff_colored_bgr[:,:,3] = (color_diff_norm * 512).astype(np.uint8)       
             cv2.imwrite(f"{opac_subfolder}/diff{os.path.basename(numeric_part)}.png", diff_colored_bgr)
             grid = torch.stack([GTtensor, evaltensor], dim=0)
             grid = make_grid(grid, nrow=4)
