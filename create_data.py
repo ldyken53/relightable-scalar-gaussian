@@ -368,7 +368,7 @@ def buildRawDataset(
 
     # Controls the camera orbit and capture frequency
     zooms = [1] if not zoom else [2, 2, 3, 3]
-    azimuth_steps = 16 if not random_colormaps and not narrow and not zoom else 16
+    azimuth_steps = 32 if not random_colormaps and not narrow and not zoom else 16
     elevation_steps = 10 if not random_colormaps and not narrow and not zoom else 5
     azimuth_range = np.linspace(0, 360, azimuth_steps, endpoint=False)
     # elevation is intentionally limited to avoid a render bug(s) that occurs when elevation is outside of [-35, 35]
