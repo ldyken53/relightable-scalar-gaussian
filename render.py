@@ -62,7 +62,7 @@ def load_ckpts_paths(source_dir, is_scalar):
 
     return ckpts_transforms
 
-def scene_composition(scene_dict: dict, dataset: ModelParams, is_scalar = False):
+def scene_composition(scene_dict: dict, dataset: ModelParams, is_scalar = False, source_dir = ""):
     gaussians_list = []
     for scene in scene_dict:
         if is_scalar:
@@ -70,8 +70,9 @@ def scene_composition(scene_dict: dict, dataset: ModelParams, is_scalar = False)
         else:
             gaussians = GaussianModel(dataset.sh_degree, render_type="phong")
         print("Compose scene from GS path:", scene_dict[scene]["path"])
-        gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
-        
+        # gaussians.my_load_ply(scene_dict[scene]["path"], quantised=True, half_float=True)
+        gaussians.create_from_ckpt(os.path.join(source_dir, "chkpnt30000.pth"))
+
         torch_transform = torch.tensor(scene_dict[scene]["transform"], device="cuda").reshape(4, 4)
         gaussians.set_transform(transform=torch_transform)
 
@@ -191,7 +192,7 @@ if __name__ == '__main__':
         opacity_transforms.append(opacity_transform)
         TFcount+=1
     # load gaussians
-    gaussians_composite = scene_composition(scene_dict, dataset, args.is_scalar)
+    gaussians_composite = scene_composition(scene_dict, dataset, args.is_scalar, args.source_dir)
     # if not args.is_scalar:
     #     gaussians_composite.produce_clusters(store_dict_path=args.source_dir)
     #     gaussians_composite.apply_clustering(codebook_dict=gaussians_composite._codebook_dict)
@@ -231,19 +232,24 @@ if __name__ == '__main__':
     num_points = 100
     num_maps = args.TFnums
     opacs = []
-    indices = np.linspace(0, 1, num_points)
-    step_size = 1.0 / num_maps
-    eps = 1e-4
-    for step in range(num_maps):
-        center = step * step_size + step_size / 2 + eps
-        arr = np.zeros(num_points, dtype=np.float32)
-        for i, x in enumerate(indices):
-            dist = abs(x - center)
-            arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
-        opacs.append(arr)
+    # indices = np.linspace(0, 1, num_points)
+    # step_size = 1.0 / num_maps
+    # eps = 1e-4
+    # for step in range(num_maps):
+    #     center = step * step_size + step_size / 2 + eps
+    #     arr = np.zeros(num_points, dtype=np.float32)
+    #     for i, x in enumerate(indices):
+    #         dist = abs(x - center)
+    #         arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
+    #     opacs.append(arr)
+    control_x = np.array([0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0])
+    control_y = np.array([0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0])
 
-    H = 800
-    W = 800
+    indices = np.linspace(0, 1, num_points)
+    opacs.append(np.interp(indices, control_x, control_y).astype(np.float32))
+
+    H = 1200
+    W = 1200
     fovx = 30 * np.pi / 180
     fovy = focal2fov(fov2focal(fovx, W), H)
 
