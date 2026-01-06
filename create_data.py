@@ -180,17 +180,22 @@ def buildRawDataset(
             arr = arr * 0.5
             opacs.append(arr)
     else: 
-        indices = np.linspace(0, 1, num_points)
-        step_size = 1.0 / num_maps
-        eps = 1e-4
-        for step in range(num_maps):
-            center = step * step_size + step_size / 2 + eps
-            arr = np.zeros(num_points, dtype=np.float32)
+        # indices = np.linspace(0, 1, num_points)
+        # step_size = 1.0 / num_maps
+        # eps = 1e-4
+        # for step in range(num_maps):
+        #     center = step * step_size + step_size / 2 + eps
+        #     arr = np.zeros(num_points, dtype=np.float32)
             
-            for i, x in enumerate(indices):
-                dist = abs(x - center)
-                arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
-            opacs.append(arr)
+        #     for i, x in enumerate(indices):
+        #         dist = abs(x - center)
+        #         arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
+        #     opacs.append(arr)
+        control_x = np.array([0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0])
+        control_y = np.array([0.0, 0.0, 0.3, 0.0, 1.0, 0.0, 0.0])
+
+        indices = np.linspace(0, 1, num_points)
+        opacs.append(np.interp(indices, control_x, control_y).astype(np.float32))
     if random_colormaps:
         cmaps = ["rainbow_r", "rainbow",
                 "coolwarm", "coolwarm_r", "RdYlBu"]
@@ -202,7 +207,7 @@ def buildRawDataset(
     height = 800
     pl = pv.Plotter(off_screen=True, lighting="none")
     headlight = pv.Light(light_type='headlight')
-    headlight.intensity = 2.0
+    headlight.intensity = 1.0
     pl.add_light(headlight)
     pl.window_size = [width, height]
     if white:
@@ -274,16 +279,26 @@ def buildRawDataset(
         mesh.scale(1.0/(global_max - global_min), inplace=True)
         scalars = "value"
         # mesh.translate(np.array([0.01,0.01,0.01]), inplace=True)
-    elif raw_file.endswith(".vtk"):
+    elif raw_file.endswith(".vtk") or raw_file.endswith(".vti"):
         dir = os.path.join(out_path, os.path.basename(raw_file).rsplit(".", 1)[0])
         os.makedirs(dir, exist_ok=True)
 
         mesh = pv.read(raw_file)
-        values = mesh.get_array("volume_scalars").reshape(-1, 1)
+        if mesh.point_data.keys():
+            scalars = list(mesh.point_data.keys())[0]
+        elif mesh.cell_data.keys():
+            scalars = list(mesh.cell_data.keys())[0]
+            # Convert cell data to point data for volume rendering
+            mesh = mesh.cell_data_to_point_data()
+        else:
+            raise ValueError("No scalar data found in the mesh")
+        
+        mesh.point_data[scalars] = mesh.point_data[scalars].astype(np.float64)
+        values = mesh.get_array(scalars).reshape(-1, 1)
         values_min = values.min()
         values_max = values.max()
         values = (values - values_min) / (values_max - values_min)
-        mesh.get_array("volume_scalars")[:] = values.ravel()
+        mesh.get_array(scalars)[:] = values.ravel()
 
         # Scale mesh to the unit cube
         xmin, xmax, ymin, ymax, zmin, zmax = mesh.bounds
@@ -291,7 +306,6 @@ def buildRawDataset(
         global_max = max(xmax, ymax, zmax)
         mesh.translate(np.array([-global_min, -global_min, -global_min]), inplace=True)
         mesh.scale(1.0/(global_max - global_min), inplace=True)
-        scalars = "volume_scalars"
     else:
         # Parse the filename
         filename = os.path.basename(raw_file).rsplit(".", 1)[0]
@@ -368,11 +382,11 @@ def buildRawDataset(
 
     # Controls the camera orbit and capture frequency
     zooms = [1] if not zoom else [2, 2, 3, 3]
-    azimuth_steps = 32 if not random_colormaps and not narrow and not zoom else 16
-    elevation_steps = 10 if not random_colormaps and not narrow and not zoom else 5
+    azimuth_steps = 20 if not random_colormaps and not narrow and not zoom else 16
+    elevation_steps = 8 if not random_colormaps and not narrow and not zoom else 5
     azimuth_range = np.linspace(0, 360, azimuth_steps, endpoint=False)
     # elevation is intentionally limited to avoid a render bug(s) that occurs when elevation is outside of [-35, 35]
-    elevation_range = np.linspace(-35, 35, elevation_steps, endpoint=True)
+    elevation_range = np.linspace(-60, 60, elevation_steps, endpoint=True)
     for i, opac in enumerate(opacs):
         train_cams = []
         test_cams = []
@@ -397,7 +411,7 @@ def buildRawDataset(
                 show_scalar_bar=False,
                 scalars=scalars,
                 cmap=cmap,
-                opacity=opac * 255,
+                opacity=opac,
                 shade=shade,
                 render=False,
                 # ambient=0.3,
