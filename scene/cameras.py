@@ -54,7 +54,7 @@ class Camera(nn.Module):
         self.colormap = torch.tensor(colors, dtype=torch.float32).to("cuda")
 
         num_points = 100
-        num_maps = 10
+        num_maps = 5
         opacs = []
         indices = np.linspace(0, 1, num_points)
         step_size = 1.0 / num_maps

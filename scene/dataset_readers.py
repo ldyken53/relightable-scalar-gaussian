@@ -169,39 +169,39 @@ def fetchPly(path):
 
     return BasicPointCloud(points=positions, colors=colors, values=None, normals=normals)
 
-def fetchScalarPly(path):
-    plydata = PlyData.read(path)
-    vertices = plydata["vertex"]
-    positions = np.vstack([vertices["x"], vertices["y"], vertices["z"]]).T
-    # positions = np.vstack([vertices["x"], vertices["y"], vertices["z"] + 3]).T
-    values = np.vstack(vertices["value"]).T
-    normals = np.random.random(positions.shape)
-    return BasicPointCloud(points=positions, colors=None, values=values, normals=normals)
-
 # def fetchScalarPly(path):
 #     plydata = PlyData.read(path)
 #     vertices = plydata["vertex"]
-    
-#     # Get min/max ranges
-#     x_min, x_max = np.min(vertices["x"]), np.max(vertices["x"])
-#     y_min, y_max = np.min(vertices["y"]), np.max(vertices["y"])
-#     z_min, z_max = np.min(vertices["z"]) + 3, np.max(vertices["z"]) + 3
-    
-#     print(x_min, y_min, z_min)
-#     print(x_max, y_max, z_max)
-    
-#     # Generate random positions within the min/max ranges
-#     num_points = len(vertices["x"])
-#     random_x = np.random.uniform(x_min, x_max, num_points)
-#     random_y = np.random.uniform(y_min, y_max, num_points)
-#     random_z = np.random.uniform(z_min, z_max, num_points)
-#     positions = np.vstack([random_x, random_y, random_z]).T
-    
-#     # Generate random values in [0, 1]
-#     values = np.random.uniform(0, 1, (num_points, 1))
-    
+#     positions = np.vstack([vertices["x"], vertices["y"], vertices["z"]]).T
+#     # positions = np.vstack([vertices["x"], vertices["y"], vertices["z"] + 3]).T
+#     values = np.vstack(vertices["value"]).T
 #     normals = np.random.random(positions.shape)
 #     return BasicPointCloud(points=positions, colors=None, values=values, normals=normals)
+
+def fetchScalarPly(path):
+    plydata = PlyData.read(path)
+    vertices = plydata["vertex"]
+    
+    # Get min/max ranges
+    x_min, x_max = np.min(vertices["x"]), np.max(vertices["x"])
+    y_min, y_max = np.min(vertices["y"]), np.max(vertices["y"])
+    z_min, z_max = np.min(vertices["z"]), np.max(vertices["z"])
+    
+    print(x_min, y_min, z_min)
+    print(x_max, y_max, z_max)
+    
+    # Generate random positions within the min/max ranges
+    num_points = len(vertices["x"])
+    random_x = np.random.uniform(x_min, x_max, num_points)
+    random_y = np.random.uniform(y_min, y_max, num_points)
+    random_z = np.random.uniform(z_min, z_max, num_points)
+    positions = np.vstack([random_x, random_y, random_z]).T
+    
+    # Generate random values in [0, 1]
+    values = np.random.uniform(0, 1, (num_points, 1))
+    
+    normals = np.random.random(positions.shape)
+    return BasicPointCloud(points=positions, colors=None, values=values, normals=normals)
 
 
 def storePly(path, xyz, rgb, normals=None):

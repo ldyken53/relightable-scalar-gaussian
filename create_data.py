@@ -177,25 +177,31 @@ def buildRawDataset(
         indices = np.arange(num_points)
         bins = np.linspace(0, num_points, num_maps+1).astype(int)
         for arr in [((indices >= start) & (indices < end)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]:
-            arr = arr * 0.5
+            arr = arr * 0.1
             opacs.append(arr)
+        # opacs = [opacs[9] + opacs[7] + opacs[5], opacs[8] + opacs[6] + opacs[4], opacs[9] + opacs[6], opacs[8] + opacs[5], opacs[4] + opacs[7], opacs[9] + opacs[4]]
     else: 
-        # indices = np.linspace(0, 1, num_points)
-        # step_size = 1.0 / num_maps
-        # eps = 1e-4
-        # for step in range(num_maps):
-        #     center = step * step_size + step_size / 2 + eps
-        #     arr = np.zeros(num_points, dtype=np.float32)
-            
-        #     for i, x in enumerate(indices):
-        #         dist = abs(x - center)
-        #         arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
-        #     opacs.append(arr)
-        control_x = np.array([0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0])
-        control_y = np.array([0.0, 0.0, 0.3, 0.0, 1.0, 0.0, 0.0])
-
         indices = np.linspace(0, 1, num_points)
-        opacs.append(np.interp(indices, control_x, control_y).astype(np.float32))
+        step_size = 1.0 / num_maps
+        eps = 1e-4
+        for step in range(num_maps):
+            center = step * step_size + step_size / 2 + eps
+            arr = np.zeros(num_points, dtype=np.float32)
+            
+            for i, x in enumerate(indices):
+                dist = abs(x - center)
+                arr[i] = max(0, 1 - (dist * 2 * slope * (num_maps / 2)))
+            opacs.append(arr)
+        opac = 0.05 * (opacs[1] + opacs[2] + opacs[3] + opacs[4])
+        # opac[(opac > 0) & (opac < 0.03)] = 0.03
+        opacs = [opac]
+        # control_x = np.array([0.0, 0.1, 1.0])
+        # control_y = np.array([0.0, 0.0, 1.0])
+        # control_x = np.array([0.0, 0.2, 0.2, 0.3, 0.3, 1.0])
+        # control_y = np.array([0.025, 0.025, 0.5, 0.5, 0.0, 0.0])
+
+        # indices = np.linspace(0, 1, num_points)
+        # opacs.append(0.1 * np.interp(indices, control_x, control_y).astype(np.float32))
     if random_colormaps:
         cmaps = ["rainbow_r", "rainbow",
                 "coolwarm", "coolwarm_r", "RdYlBu"]
@@ -203,8 +209,8 @@ def buildRawDataset(
         cmaps = ["viridis"]
         
     # Window setup
-    width = 800
-    height = 800
+    width = 1200
+    height = 1200
     pl = pv.Plotter(off_screen=True, lighting="none")
     headlight = pv.Light(light_type='headlight')
     headlight.intensity = 1.0
@@ -382,8 +388,8 @@ def buildRawDataset(
 
     # Controls the camera orbit and capture frequency
     zooms = [1] if not zoom else [2, 2, 3, 3]
-    azimuth_steps = 20 if not random_colormaps and not narrow and not zoom else 16
-    elevation_steps = 8 if not random_colormaps and not narrow and not zoom else 5
+    azimuth_steps = 20 if not random_colormaps and not narrow and not zoom else 20
+    elevation_steps = 8 if not random_colormaps and not narrow and not zoom else 8
     azimuth_range = np.linspace(0, 360, azimuth_steps, endpoint=False)
     # elevation is intentionally limited to avoid a render bug(s) that occurs when elevation is outside of [-35, 35]
     elevation_range = np.linspace(-60, 60, elevation_steps, endpoint=True)
@@ -414,8 +420,8 @@ def buildRawDataset(
                 opacity=opac,
                 shade=shade,
                 render=False,
-                # ambient=0.3,
-                # opacity_unit_distance=(1.0 / 256.0)
+                # ambient=0.1,
+                # opacity_unit_distance=(1.0 / 512.0)
             )
             pl.view_xy(render=False)
             initial_view_angle = camera.view_angle

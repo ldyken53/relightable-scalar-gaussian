@@ -232,21 +232,32 @@ if __name__ == '__main__':
     num_points = 100
     num_maps = args.TFnums
     opacs = []
-    # indices = np.linspace(0, 1, num_points)
-    # step_size = 1.0 / num_maps
-    # eps = 1e-4
-    # for step in range(num_maps):
-    #     center = step * step_size + step_size / 2 + eps
-    #     arr = np.zeros(num_points, dtype=np.float32)
-    #     for i, x in enumerate(indices):
-    #         dist = abs(x - center)
-    #         arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
-    #     opacs.append(arr)
-    control_x = np.array([0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0])
-    control_y = np.array([0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0])
-
     indices = np.linspace(0, 1, num_points)
-    opacs.append(np.interp(indices, control_x, control_y).astype(np.float32))
+    step_size = 1.0 / num_maps
+    eps = 1e-4
+    for step in range(num_maps):
+        center = step * step_size + step_size / 2 + eps
+        arr = np.zeros(num_points, dtype=np.float32)
+        for i, x in enumerate(indices):
+            dist = abs(x - center)
+            arr[i] = max(0, 1 - (dist * 2 * 1 * (num_maps / 2)))
+        opacs.append(arr)
+    # indices = np.arange(num_points)
+    # bins = np.linspace(0, num_points, num_maps+1).astype(int)
+    # for arr in [((indices >= start) & (indices < end)).astype(np.float32) for start, end in zip(bins[:-1], bins[1:])]:
+    #     arr = arr
+    #     opacs.append(arr)
+    # opacs = [opacs[9] + opacs[7] + opacs[5], opacs[8] + opacs[6] + opacs[4], opacs[9] + opacs[6], opacs[8] + opacs[5], opacs[4] + opacs[7], opacs[9] + opacs[4]]
+    opac = 0.2 * (opacs[1] + opacs[2] + opacs[3] + opacs[4])
+    opacs = [opac]
+
+    # control_x = np.array([0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0])
+    # control_y = np.array([0.0, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0])
+    # control_x = np.array([0.0, 0.2, 0.2, 0.3, 0.3, 1.0])
+    # control_y = np.array([0.125, 0.125, 0.5, 0.5, 0.0, 0.0])
+
+    # indices = np.linspace(0, 1, num_points)
+    # opacs.append(1 * np.interp(indices, control_x, control_y).astype(np.float32))
 
     H = 1200
     W = 1200
